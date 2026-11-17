@@ -126,7 +126,7 @@ function initZoneBeds(ctx) {
 }
 
 function overview(ctx) {
-  const visits = h(ctx, 'ed_visits').filter(v => !['discharged','transferred','lwbs','deceased','admitted'].includes(v.status));
+  const visits = h(ctx, 'ed_visits').filter(v => !require('../core/domain/ed-visit-writer').TERMINAL.includes(v.status));
   const beds = h(ctx, 'beds').filter(b => b.zone || b.area === 'ed');
   const codes = h(ctx, 'ed_codes').filter(c => c.status === 'active');
   const allVisits = h(ctx, 'ed_visits');

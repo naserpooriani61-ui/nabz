@@ -107,4 +107,4 @@ function compare(suggestion, chosenLevel) {
   return { valid: true, direction, reasonRequired: (s != null && ch > s) || (k != null && ch > k) };
 }
 
-module.exports = { suggest, compare, ageBracket, reloadConfig };
+module.exports = { suggest, compare, ageBracket, reloadConfig, getConfig: cfg };

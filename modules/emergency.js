@@ -154,3 +154,6 @@ module.exports = {
     { id: 'stats', title: 'آمار ED',   icon: '📊', perm: 'ed.view',        kind: 'stats', api: '/api/emergency/stats' }
   ]
 };
+
+// ── ED core extension (28A): writer-based lifecycle, board, ESI suggestion ──
+try { require('../core/domain/ed-api').extend(module.exports); } catch (e) { console.error('[ed-core] extend failed:', e && e.message); }

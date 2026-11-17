@@ -9,6 +9,7 @@ for f in "$@"; do
 done
 node tools/test-all.js 2>&1 | tail -6 | grep -q "ALL TESTS PASSED" || { echo "❌ test-all سبز نیست؛ پوش نشد"; exit 1; }
 if [ -f tools/test-ed.js ]; then node tools/test-ed.js >/dev/null 2>&1 || { echo "❌ test-ed سبز نیست؛ پوش نشد"; exit 1; }; fi
+if [ -f tools/test-ed-flow.js ]; then node tools/test-ed-flow.js >/dev/null 2>&1 || { echo "❌ test-ed-flow سبز نیست؛ پوش نشد"; exit 1; }; fi
 git add -- "$@"
 git diff --cached --quiet -- "$@" && { echo "ℹ️ تغییری برای commit نیست"; exit 0; }
 git commit -m "$MSG" -- "$@" || exit 1
