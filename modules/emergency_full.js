@@ -139,7 +139,7 @@ function overview(ctx) {
   }
 
   const byEsi = { 1:0, 2:0, 3:0, 4:0, 5:0 };
-  visits.forEach(v => { if (v.esi) byEsi[v.esi]++; });
+  visits.forEach(v => { const e = Number(v.esiLevel != null ? v.esiLevel : v.esi); if (e >= 1 && e <= 5) byEsi[e]++; });
 
   const allToday = allVisits.filter(v => (v.arrivalAt || '').startsWith(today()));
   const d2t = allToday.map(v => minutesBetween(v.arrivalAt, v.triagedAt)).filter(x => x != null);

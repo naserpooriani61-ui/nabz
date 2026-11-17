@@ -1,0 +1,27 @@
+{
+  "_note": "پیش‌فرض‌های قابل ویرایش. باید توسط استاد طب اورژانس و سرپرستار اورژانس تأیید شود؛ جایگزین پروتکل مصوب بیمارستان نیست.",
+  "version": 1,
+  "esi": {
+    "maxWaitMin":  { "1": 0, "2": 15, "3": 30, "4": 60, "5": 120 },
+    "reassessMin": { "1": 0, "2": 15, "3": 30, "4": 60, "5": 120 },
+    "severePainAtOrAbove": 7
+  },
+  "critical": {
+    "gcsAtOrBelow": 8,
+    "spo2Below": 85,
+    "fromAgeYears": 12,
+    "sbpBelow": 80,
+    "rrBelow": 8,
+    "rrAbove": 35
+  },
+  "dangerZone": {
+    "spo2Below": 92,
+    "brackets": [
+      { "label": "کمتر از ۳ ماه", "maxAgeMonths": 3,    "hrAbove": 180, "rrAbove": 50 },
+      { "label": "۳ ماه تا ۳ سال", "maxAgeMonths": 36,   "hrAbove": 160, "rrAbove": 40 },
+      { "label": "۳ تا ۸ سال",     "maxAgeMonths": 96,   "hrAbove": 140, "rrAbove": 30 },
+      { "label": "بالای ۸ سال",    "maxAgeMonths": 1200, "hrAbove": 100, "rrAbove": 20 }
+    ]
+  },
+  "febrileInfant": { "maxAgeMonths": 3, "tempAtOrAbove": 38.0 }
+}
