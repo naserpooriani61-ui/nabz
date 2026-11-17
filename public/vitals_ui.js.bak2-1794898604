@@ -1,0 +1,347 @@
+'use strict';
+// NABZ — Vitals Command Center (patient-centric, NEWS2, interactive charts)
+(function () {
+  const V = {
+    _patientId: null,
+    _cache: null,
+    _tab: 'now', // now | trend | entry
+
+    _api(url, opts) {
+      if (typeof NABZ !== 'undefined' && typeof NABZ._api === 'function') return NABZ._api(url, opts);
+      return fetch(url, Object.assign({ headers: { 'Content-Type': 'application/json' } }, opts || {})).then(r => {
+        if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
+        return r.json();
+      });
+    },
+    _esc(s) {
+      return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    },
+    _fmtTime(iso) {
+      if (!iso) return '—';
+      try {
+        const d = new Date(iso);
+        return d.toLocaleTimeString('fa-IR', { hour: '2-digit', minute: '2-digit' });
+      } catch (_) { return '—'; }
+    },
+    _rel(iso) {
+      if (!iso) return '';
+      const m = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+      if (m < 60) return m + ' دقیقه پیش';
+      if (m < 1440) return Math.floor(m / 60) + ' ساعت پیش';
+      return Math.floor(m / 1440) + ' روز پیش';
+    },
+
+    // ── Clinical color for each parameter ──
+    _color(key, val, onO2) {
+      if (val == null || val === '') return { c: '#94a3b8', bg: '#f8fafc', label: '—' };
+      const n = Number(val);
+      if (key === 'hr') {
+        if (n <= 40 || n >= 131) return { c: '#dc2626', bg: '#fef2f2', label: 'بحرانی' };
+        if (n <= 50 || n >= 111) return { c: '#d97706', bg: '#fffbeb', label: 'هشدار' };
+        return { c: '#059669', bg: '#f0fdf4', label: 'طبیعی' };
+      }
+      if (key === 'bp_sys') {
+        if (n <= 90 || n >= 220) return { c: '#dc2626', bg: '#fef2f2', label: 'بحرانی' };
+        if (n <= 100) return { c: '#d97706', bg: '#fffbeb', label: 'پایین' };
+        return { c: '#059669', bg: '#f0fdf4', label: 'طبیعی' };
+      }
+      if (key === 'spo2') {
+        if (n <= 91) return { c: '#dc2626', bg: '#fef2f2', label: 'بحرانی' };
+        if (n <= 95) return { c: '#d97706', bg: '#fffbeb', label: 'هشدار' };
+        return { c: '#059669', bg: '#f0fdf4', label: 'طبیعی' };
+      }
+      if (key === 'rr') {
+        if (n <= 8 || n >= 25) return { c: '#dc2626', bg: '#fef2f2', label: 'بحرانی' };
+        if (n <= 11 || n >= 21) return { c: '#d97706', bg: '#fffbeb', label: 'هشدار' };
+        return { c: '#059669', bg: '#f0fdf4', label: 'طبیعی' };
+      }
+      if (key === 'temp') {
+        if (n <= 35 || n >= 39.1) return { c: '#dc2626', bg: '#fef2f2', label: 'بحرانی' };
+        if (n <= 36 || n >= 38.1) return { c: '#d97706', bg: '#fffbeb', label: 'هشدار' };
+        return { c: '#059669', bg: '#f0fdf4', label: 'طبیعی' };
+      }
+      return { c: '#64748b', bg: '#f8fafc', label: '' };
+    },
+
+    _newsColor(level) {
+      if (level === 'critical') return { bg: '#7f1d1d', fg: '#fff', border: '#dc2626' };
+      if (level === 'high') return { bg: '#9a3412', fg: '#fff', border: '#ea580c' };
+      if (level === 'medium') return { bg: '#a16207', fg: '#fff', border: '#d97706' };
+      return { bg: '#065f46', fg: '#fff', border: '#059669' };
+    },
+
+    // ── Simple SVG sparkline / multi-series chart ──
+    _svgChart(series, w, h) {
+      // series: [{t, hr, sbp, spo2, news}, ...]
+      if (!series || series.length < 2) {
+        return '<div style="text-align:center;color:#94a3b8;padding:24px;font-size:13px">دادهٔ کافی برای نمودار نیست</div>';
+      }
+      const pad = 28;
+      const W = w || 340;
+      const H = h || 160;
+      const n = series.length;
+      const xs = series.map((_, i) => pad + (i / (n - 1)) * (W - pad * 2));
+
+      function line(key, color, minV, maxV) {
+        const vals = series.map(s => s[key]).filter(v => v != null && isFinite(v));
+        if (vals.length < 2) return '';
+        const lo = minV != null ? minV : Math.min.apply(null, vals);
+        const hi = maxV != null ? maxV : Math.max.apply(null, vals);
+        const span = (hi - lo) || 1;
+        const pts = series.map((s, i) => {
+          const v = s[key];
+          if (v == null || !isFinite(v)) return null;
+          const y = H - pad - ((v - lo) / span) * (H - pad * 2);
+          return xs[i] + ',' + y;
+        }).filter(Boolean);
+        if (pts.length < 2) return '';
+        return '<polyline fill="none" stroke="' + color + '" stroke-width="2.2" stroke-linejoin="round" points="' + pts.join(' ') + '"/>';
+      }
+
+      let svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" style="display:block;background:#0f172a;border-radius:12px">';
+      // grid
+      svg += '<line x1="' + pad + '" y1="' + (H / 2) + '" x2="' + (W - pad) + '" y2="' + (H / 2) + '" stroke="#1e293b" stroke-width="1"/>';
+      svg += line('news', '#f59e0b', 0, 20);
+      svg += line('hr', '#38bdf8', 40, 180);
+      svg += line('spo2', '#34d399', 70, 100);
+      svg += line('sbp', '#f472b6', 70, 200);
+      // legend
+      svg += '<text x="' + pad + '" y="14" fill="#94a3b8" font-size="10">NEWS2</text>';
+      svg += '<circle cx="' + (pad + 42) + '" cy="10" r="3" fill="#f59e0b"/>';
+      svg += '<text x="' + (pad + 55) + '" y="14" fill="#94a3b8" font-size="10">HR</text>';
+      svg += '<circle cx="' + (pad + 78) + '" cy="10" r="3" fill="#38bdf8"/>';
+      svg += '<text x="' + (pad + 90) + '" y="14" fill="#94a3b8" font-size="10">SpO₂</text>';
+      svg += '<circle cx="' + (pad + 120) + '" cy="10" r="3" fill="#34d399"/>';
+      svg += '<text x="' + (pad + 132) + '" y="14" fill="#94a3b8" font-size="10">SBP</text>';
+      svg += '<circle cx="' + (pad + 160) + '" cy="10" r="3" fill="#f472b6"/>';
+      svg += '</svg>';
+      return svg;
+    },
+
+    async show(p, d) {
+      const m = document.getElementById('content');
+      if (!m) return;
+      m.innerHTML = '<div style="text-align:center;padding:40px"><span class="spinner"></span></div>';
+
+      V._patientId = (d && d.patientId) || (p && p.patientId) ||
+        (typeof location !== 'undefined' && new URLSearchParams(location.search).get('patientId')) || null;
+
+      try {
+        let items = [];
+        let series = [];
+        if (V._patientId) {
+          const [list, chart] = await Promise.all([
+            V._api('/api/clinical/vitals?patientId=' + encodeURIComponent(V._patientId)),
+            V._api('/api/clinical/vitals/' + encodeURIComponent(V._patientId) + '/chart').catch(() => ({ series: [] }))
+          ]);
+          items = (list.items || list || []).slice().sort((a, b) => new Date(b.recordedAt) - new Date(a.recordedAt));
+          series = chart.series || [];
+        } else {
+          const list = await V._api('/api/clinical/vitals');
+          items = (list.items || list || []).slice(0, 30);
+        }
+        V._cache = { items, series };
+
+        const latest = items[0] || {};
+        const prev = items[1] || {};
+        const newsLevel = latest.newsLevel || (latest.news2 >= 7 ? 'critical' : latest.news2 >= 5 ? 'high' : latest.news2 >= 1 ? 'medium' : 'low');
+        const newsAction = latest.newsAction || '';
+        const nc = V._newsColor(newsLevel);
+
+        let h = '';
+
+        // Header
+        h += '<div style="background:linear-gradient(135deg,#0f172a,#1e3a5f);color:#fff;padding:14px 16px;border-radius:14px;margin:0 0 12px;box-shadow:0 4px 16px rgba(15,23,42,.25)">';
+        h += '<div style="font-size:16px;font-weight:800">📈 علائم حیاتی · ' + V._esc(latest.patientName || V._patientId || 'همه') + '</div>';
+        if (V._patientId) {
+          h += '<div style="font-size:12px;opacity:.85;margin-top:3px">' + V._esc(latest.wardCode || '') + ' · ' + V._patientId + '</div>';
+        }
+        h += '</div>';
+
+        // NEWS2 banner
+        if (latest.news2 != null) {
+          h += '<div style="background:' + nc.bg + ';color:' + nc.fg + ';border:2px solid ' + nc.border + ';border-radius:14px;padding:14px 16px;margin:0 0 14px;text-align:center">';
+          h += '<div style="font-size:11px;opacity:.9;font-weight:700">NEWS2</div>';
+          h += '<div style="font-size:42px;font-weight:900;line-height:1.1">' + latest.news2 + '</div>';
+          h += '<div style="font-size:13px;font-weight:800;margin-top:4px">' + (newsLevel === 'critical' ? 'بحرانی' : newsLevel === 'high' ? 'بالا' : newsLevel === 'medium' ? 'متوسط' : 'پایین');
+          if (newsAction) h += ' · ' + V._esc(newsAction);
+          h += '</div>';
+          if (latest.recordedAt) h += '<div style="font-size:11px;opacity:.8;margin-top:6px">' + V._rel(latest.recordedAt) + '</div>';
+          h += '</div>';
+        }
+
+        // Parameter cards
+        if (latest.hr != null || latest.bp_sys != null) {
+          const cards = [
+            { key: 'hr', label: 'نبض', val: latest.hr, unit: '', prev: prev.hr },
+            { key: 'bp_sys', label: 'فشار', val: latest.bp_sys != null ? (latest.bp_sys + '/' + (latest.bp_dia || '—')) : null, unit: '', raw: latest.bp_sys, prev: prev.bp_sys },
+            { key: 'spo2', label: 'SpO₂', val: latest.spo2, unit: '%', prev: prev.spo2 },
+            { key: 'rr', label: 'تنفس', val: latest.rr, unit: '', prev: prev.rr },
+            { key: 'temp', label: 'دما', val: latest.temp, unit: '°', prev: prev.temp },
+            { key: 'gcs', label: 'GCS', val: latest.gcs, unit: '', prev: prev.gcs }
+          ];
+          h += '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:0 0 14px">';
+          cards.forEach(c => {
+            if (c.val == null && c.raw == null) return;
+            const col = V._color(c.key, c.raw != null ? c.raw : c.val, latest.onOxygen);
+            let delta = '';
+            if (c.prev != null && (c.raw != null || typeof c.val === 'number')) {
+              const cur = c.raw != null ? c.raw : Number(c.val);
+              const dlt = cur - Number(c.prev);
+              if (isFinite(dlt) && dlt !== 0) delta = (dlt > 0 ? '↑' : '↓') + Math.abs(dlt);
+            }
+            h += '<div style="background:' + col.bg + ';border:1.5px solid ' + col.c + ';border-radius:12px;padding:10px 8px;text-align:center">';
+            h += '<div style="font-size:10px;color:#64748b;font-weight:700">' + c.label + '</div>';
+            h += '<div style="font-size:20px;font-weight:900;color:' + col.c + ';line-height:1.2">' + V._esc(String(c.val)) + (c.unit || '') + '</div>';
+            if (delta) h += '<div style="font-size:10px;color:#64748b">' + delta + '</div>';
+            else if (col.label) h += '<div style="font-size:9px;color:' + col.c + ';font-weight:700">' + col.label + '</div>';
+            h += '</div>';
+          });
+          h += '</div>';
+          if (latest.onOxygen) {
+            h += '<div style="background:#dbeafe;color:#1e40af;padding:8px 12px;border-radius:10px;font-size:12px;font-weight:700;margin:0 0 12px">🫁 بیمار اکسیژن دریافت می‌کند</div>';
+          }
+        }
+
+        // Tabs
+        const tabs = [
+          ['now', 'اکنون'],
+          ['trend', 'روند'],
+          ['entry', 'ثبت جدید']
+        ];
+        h += '<div style="display:flex;gap:6px;margin:0 0 12px;overflow-x:auto">';
+        tabs.forEach(([id, label]) => {
+          const on = (V._tab || 'now') === id;
+          h += '<button onclick="NABZ.vitalsUI.setTab(\\'' + id + '\\')" style="flex:1;min-width:70px;padding:10px;border-radius:10px;font-weight:800;font-size:12px;border:none;';
+          h += on ? 'background:#0f172a;color:#fff' : 'background:#f1f5f9;color:#475569';
+          h += '">' + label + '</button>';
+        });
+        h += '</div>';
+
+        const tab = V._tab || 'now';
+
+        if (tab === 'trend') {
+          h += V._svgChart(series.length ? series : items.slice().reverse().map(v => ({
+            t: v.recordedAt, hr: v.hr, sbp: v.bp_sys, dbp: v.bp_dia, spo2: v.spo2, temp: v.temp, news: v.news2
+          })), 340, 170);
+          h += '<div style="font-size:11px;color:#64748b;text-align:center;margin-top:8px">روند HR / SpO₂ / SBP / NEWS2</div>';
+        } else if (tab === 'entry') {
+          h += V._renderEntryForm();
+        } else {
+          // history list
+          if (!items.length) {
+            h += '<div style="text-align:center;color:#94a3b8;padding:30px">هنوز علائمی ثبت نشده</div>';
+          } else {
+            items.slice(0, 20).forEach(v => {
+              const nl = v.newsLevel || '';
+              const ncol = V._newsColor(nl);
+              h += '<div style="background:#fff;border-radius:12px;padding:12px;margin-bottom:8px;border:1px solid #e2e8f0;box-shadow:0 1px 3px rgba(0,0,0,.04)">';
+              h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">';
+              h += '<span style="font-size:12px;color:#64748b">' + V._fmtTime(v.recordedAt) + ' · ' + V._rel(v.recordedAt) + '</span>';
+              if (v.news2 != null) {
+                h += '<span style="background:' + ncol.bg + ';color:' + ncol.fg + ';padding:2px 10px;border-radius:999px;font-size:11px;font-weight:800">NEWS2 ' + v.news2 + '</span>';
+              }
+              h += '</div>';
+              h += '<div style="font-size:13px;color:#0f172a">';
+              if (v.hr != null) h += '<b>HR</b> ' + v.hr + '  ';
+              if (v.bp_sys != null) h += '<b>BP</b> ' + v.bp_sys + '/' + (v.bp_dia || '—') + '  ';
+              if (v.spo2 != null) h += '<b>SpO₂</b> ' + v.spo2 + '%  ';
+              if (v.rr != null) h += '<b>RR</b> ' + v.rr + '  ';
+              if (v.temp != null) h += '<b>T</b> ' + v.temp;
+              h += '</div>';
+              if (v.recordedByName) h += '<div style="font-size:11px;color:#94a3b8;margin-top:4px">' + V._esc(v.recordedByName) + '</div>';
+              h += '</div>';
+            });
+          }
+        }
+
+        m.innerHTML = h;
+      } catch (e) {
+        m.innerHTML = '<div class="empty">خطا: ' + V._esc(e.message || e) + '</div>';
+      }
+    },
+
+    setTab(tab) {
+      V._tab = tab;
+      V.show(null, V._patientId ? { patientId: V._patientId } : null);
+    },
+
+    _renderEntryForm() {
+      let h = '<div style="background:#fff;border-radius:14px;padding:16px;border:1px solid #e2e8f0">';
+      h += '<div style="font-size:14px;font-weight:800;margin-bottom:12px">ثبت سریع علائم</div>';
+      const fields = [
+        ['hr', 'نبض (HR)', 'number'],
+        ['bp_sys', 'فشار سیستول', 'number'],
+        ['bp_dia', 'فشار دیاستول', 'number'],
+        ['spo2', 'SpO₂ %', 'number'],
+        ['rr', 'تنفس (RR)', 'number'],
+        ['temp', 'دما °C', 'number'],
+        ['gcs', 'GCS', 'number'],
+        ['pain', 'درد (0-10)', 'number']
+      ];
+      fields.forEach(([id, label]) => {
+        h += '<label style="display:block;font-size:12px;font-weight:700;color:#475569;margin:8px 0 4px">' + label + '</label>';
+        h += '<input id="vit_' + id + '" type="number" inputmode="decimal" style="width:100%;padding:10px;border:1.5px solid #e2e8f0;border-radius:10px;font-size:16px;box-sizing:border-box">';
+      });
+      h += '<label style="display:flex;align-items:center;gap:8px;margin:12px 0;font-size:13px"><input type="checkbox" id="vit_onOxygen" style="width:18px;height:18px"> اکسیژن دریافت می‌کند</label>';
+      h += '<label style="display:block;font-size:12px;font-weight:700;color:#475569;margin:8px 0 4px">سطح هوشیاری</label>';
+      h += '<select id="vit_consciousness" style="width:100%;padding:10px;border:1.5px solid #e2e8f0;border-radius:10px;font-size:14px">';
+      h += '<option value="alert">هوشیار (Alert)</option>';
+      h += '<option value="voice">پاسخ به صدا</option>';
+      h += '<option value="pain">پاسخ به درد</option>';
+      h += '<option value="unresponsive">بدون پاسخ</option>';
+      h += '</select>';
+      h += '<button onclick="NABZ.vitalsUI.submit()" class="btn btn-primary" style="width:100%;margin-top:16px;padding:14px;font-size:15px;font-weight:800;border-radius:12px">💾 ثبت علائم + محاسبه NEWS2</button>';
+      h += '</div>';
+      return h;
+    },
+
+    async submit() {
+      if (!V._patientId) return alert('بیمار مشخص نیست — از مسیر بیمار باز کنید');
+      const num = id => {
+        const el = document.getElementById('vit_' + id);
+        if (!el || el.value === '') return null;
+        const n = Number(el.value);
+        return isFinite(n) ? n : null;
+      };
+      const body = {
+        patientId: V._patientId,
+        hr: num('hr'),
+        bp_sys: num('bp_sys'),
+        bp_dia: num('bp_dia'),
+        spo2: num('spo2'),
+        rr: num('rr'),
+        temp: num('temp'),
+        gcs: num('gcs'),
+        pain: num('pain'),
+        onOxygen: !!(document.getElementById('vit_onOxygen') || {}).checked,
+        consciousness: (document.getElementById('vit_consciousness') || {}).value || 'alert'
+      };
+      try {
+        await V._api('/api/clinical/vitals', { method: 'POST', body: JSON.stringify(body) });
+        if (typeof NABZ._toast === 'function') NABZ._toast('✅ علائم ثبت شد');
+        V._tab = 'now';
+        V.show(null, { patientId: V._patientId });
+      } catch (e) {
+        alert('خطا: ' + (e.message || e));
+      }
+    }
+  };
+
+  // Register
+  if (typeof NABZ !== 'undefined') {
+    NABZ.vitalsUI = V;
+    if (typeof NABZ.registerKind === 'function') {
+      NABZ.registerKind('vitals_v2', function (p, d) { return V.show(p, d); });
+      NABZ.registerKind('vitals', function (p, d) { return V.show(p, d); });
+    }
+  }
+  // auto-route
+  if (typeof location !== 'undefined' && /kind\/vitals/.test(location.pathname)) {
+    setTimeout(function () {
+      const pid = new URLSearchParams(location.search).get('patientId');
+      V.show(null, pid ? { patientId: pid } : null);
+    }, 100);
+  }
+})();

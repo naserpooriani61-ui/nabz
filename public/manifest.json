@@ -1,0 +1,28 @@
+{
+  "name": "NABZ — سیستم مدیریت بیمارستانی",
+  "short_name": "NABZ",
+  "description": "کاردکس، علائم حیاتی، MAR، مشاوره، هشدارهای زنده",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#ffffff",
+  "theme_color": "#1a5fb4",
+  "lang": "fa",
+  "dir": "rtl",
+  "categories": ["medical", "productivity"],
+  "icons": [
+    {
+      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'%3E%3Crect width='192' height='192' rx='24' fill='%231a5fb4'/%3E%3Cpath d='M77 40h38v37h37v38h-37v37h-38v-37H40V77h37z' fill='%23fff'/%3E%3C/svg%3E",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' rx='64' fill='%231a5fb4'/%3E%3Cpath d='M205 107h101v100h100v101H306v100H205V308H105V207h100z' fill='%23fff'/%3E%3C/svg%3E",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

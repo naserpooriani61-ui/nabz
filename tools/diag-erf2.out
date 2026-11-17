@@ -1,0 +1,76 @@
+== A) section 1-3 of previous run ==
+== 1) module files ==
+./modules/emergency.js
+./modules/emergency_full.js
+./public/emergency-ui.js
+load OK routes=10 panels=4
+load OK routes=19 panels=5
+LOAD FAIL: window is not defined
+== 2) panel kinds vs frontend renderers ==
+erf_dashboard: FOUND in 2 public file(s)
+erf_beds: MISSING in public/  <- panel has no renderer
+erf_codes: MISSING in public/  <- panel has no renderer
+erf_orders: MISSING in public/  <- panel has no renderer
+erf_stats: MISSING in public/  <- panel has no renderer
+== 3) how the loader consumes module.panels / module.routes ==
+core/kernel.js:61:  for (const [name, mod] of Object.entries(MODS)) for (const p of (mod.panels || [])) {
+core/server.js:112:  for (const r of (mod.routes || [])) RAW.push({ method: r.method, path: r.path, perm: r.perm, handler: (mod.handlers || {})[r.handler], modName: name });
+core/server.js:149:    for (const p of (mod.panels || [])) {
+core/server.js:173:    routes: K.routes.length, modules: Object.keys(MODS).length,
+core/server.js:184:const ROUTES = K.routes;
+core/system_audit.js:109:      if (!mod || !Array.isArray(mod.routes)) continue;
+core/system_audit.js:111:      for (const r of mod.routes) {
+core/system_audit.js:112:        this.stats.routesChecked++;
+core/system_audit.js:238:      if (!mod || !Array.isArray(mod.panels)) continue;
+core/system_audit.js:240:      for (const p of mod.panels) {
+core/system_audit.js:241:        this.stats.panelsChecked++;
+core/system_audit.js:266:      if (!mod || !Array.isArray(mod.panels)) continue;
+== 4) permissions registered? ==
+== B) erf_ui.js: size, exported kinds, registration ==
+842 public/erf_ui.js
+== C) script tags / load order in index.html ==
+41:<script src="/app.js?v=mwek84qa"></script>
+69:<script src="/zz_ui_fixes.js?v=mwek84qa"></script>
+70:<script src="/zz_pretty.js?v=mwek84qa"></script>
+72:<script src="/zz_admission.js?v=mwek84qa"></script>
+76:<script src="/zz_missing_handlers.js?v=mwek84qa"></script>
+78:<script src="/zz_dispatch.js?v=mwek84qa"></script>
+95:<script src="/erf_ui.js?v=mwek84qa"></script>
+100:<script src="/zz_drawer_v3.js?v=mwekk2ol"></script>
+== D) where permissions are defined (ed.* lines) ==
+core/sse.js:81:    'ed.code.activated', 'ed.code.closed', 'ed.mci.activated',
+core/permissions.js:61:  'ed.view': 'admin,supervisor_er,supervisor_senior,supervisor_clinical,head_nurse,nurse,physician,resident,intern,attending,specialist',
+core/permissions.js:62:  'ed.triage': 'admin,supervisor_er,nurse,head_nurse',
+core/permissions.js:63:  'ed.code.activate': 'admin,supervisor_er,physician,resident,attending,nurse,head_nurse',
+core/state-machine.js:60:      { from:'waiting_triage', action:'triage', to:'waiting_doctor', perm:'ed.triage' },
+core/state-machine.js:61:      { from:'waiting_doctor', action:'disposition_admit', to:'boarding', perm:'ed.triage' },
+core/state-machine.js:62:      { from:'waiting_doctor', action:'disposition_discharge', to:'discharged', perm:'ed.triage' }
+core/state-machine.js:67:    transitions: [{ from:'active', action:'close', to:'closed', perm:'ed.code.activate' }]
+== E) which module owns er_* panels and /api/erf routes ==
+modules/clinical_enhancements_v3.js
+modules/emergency_full.js
+modules/emergency_full.js.bak
+modules/emergency_full.js.bak-1794692394
+public/zz_missing_handlers.js
+public/erf_ui.js
+== F) panel ids er_* defined (all files) ==
+modules/emergency_full.js:762:id: 'er_dashboard'
+modules/emergency_full.js:763:id: 'er_beds'
+modules/emergency_full.js:764:id: 'er_codes'
+modules/emergency_full.js:765:id: 'er_orders'
+modules/emergency_full.js:766:id: 'er_stats'
+modules/emergency_full.js.bak:762:id: 'er_dashboard'
+modules/emergency_full.js.bak:763:id: 'er_beds'
+modules/emergency_full.js.bak:764:id: 'er_codes'
+modules/emergency_full.js.bak:765:id: 'er_orders'
+modules/emergency_full.js.bak:766:id: 'er_stats'
+modules/emergency_full.js.bak-1794692394:409:id:'er_dashboard'
+modules/emergency_full.js.bak-1794692394:410:id:'er_prehospital'
+modules/emergency_full.js.bak-1794692394:411:id:'er_referrals'
+== G) server start errors (last 15 lines of log, if any) ==
+== H) live HTTP (start server first: npm start in another session) ==
+port 3000 -> 000
+port 8080 -> 000
+port 5000 -> 000
+port 3001 -> 000
+saved: tools/diag-erf2.out

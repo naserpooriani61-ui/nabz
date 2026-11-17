@@ -1,0 +1,48 @@
+== 1) module files ==
+./modules/emergency.js
+./modules/emergency_full.js
+./public/emergency-ui.js
+load OK routes=10 panels=4
+load OK routes=19 panels=5
+LOAD FAIL: window is not defined
+== 2) panel kinds vs frontend renderers ==
+erf_dashboard: FOUND in 2 public file(s)
+erf_beds: MISSING in public/  <- panel has no renderer
+erf_codes: MISSING in public/  <- panel has no renderer
+erf_orders: MISSING in public/  <- panel has no renderer
+erf_stats: MISSING in public/  <- panel has no renderer
+== 3) how the loader consumes module.panels / module.routes ==
+core/kernel.js:61:  for (const [name, mod] of Object.entries(MODS)) for (const p of (mod.panels || [])) {
+core/server.js:112:  for (const r of (mod.routes || [])) RAW.push({ method: r.method, path: r.path, perm: r.perm, handler: (mod.handlers || {})[r.handler], modName: name });
+core/server.js:149:    for (const p of (mod.panels || [])) {
+core/server.js:173:    routes: K.routes.length, modules: Object.keys(MODS).length,
+core/server.js:184:const ROUTES = K.routes;
+core/system_audit.js:109:      if (!mod || !Array.isArray(mod.routes)) continue;
+core/system_audit.js:111:      for (const r of mod.routes) {
+core/system_audit.js:112:        this.stats.routesChecked++;
+core/system_audit.js:238:      if (!mod || !Array.isArray(mod.panels)) continue;
+core/system_audit.js:240:      for (const p of mod.panels) {
+core/system_audit.js:241:        this.stats.panelsChecked++;
+core/system_audit.js:266:      if (!mod || !Array.isArray(mod.panels)) continue;
+== 4) permissions registered? ==
+ed.view: referenced in 2 other file(s)
+ed.manage: referenced in 0 other file(s)
+ed.triage: referenced in 3 other file(s)
+ed.code: referenced in 0 other file(s)
+ed.order: referenced in 0 other file(s)
+== 5) duplicate /api/erf or er_ panel ids elsewhere ==
+modules/clinical_enhancements_v3.js:285:    { method:'GET', path:'/api/erf/waiting-list', handler:'waitingList', perm:'ed.view' },
+modules/clinical_enhancements_v3.js:286:    { method:'GET', path:'/api/erf/wait-time-stats', handler:'waitTimeStats', perm:'ed.view' }
+public/zz_missing_handlers.js:21:        try { d = await NABZ._api('/api/erf/prehospital'); }
+public/zz_missing_handlers.js:44:      var d = await NABZ._api('/api/erf/prehospital');
+public/zz_missing_handlers.js:71:        await NABZ._api('/api/erf/prehospital/' + id + '/convert', { method:'POST', body:'{}' });
+public/zz_missing_handlers.js:83:        try { d = await NABZ._api('/api/erf/referral'); }
+public/zz_missing_handlers.js:120:      var d = await NABZ._api('/api/erf/referral');
+public/zz_missing_handlers.js:146:        await NABZ._api('/api/erf/referral/' + id, { method:'PUT', body: JSON.stringify({ status }) });
+public/erf_ui.js:161:        try { d = await E._api('/api/erf/overview'); }
+public/erf_ui.js:171:          E._api('/api/erf/prehospital').catch(() => ({ items: [] })),
+== 6) live HTTP (404 = route not registered, 401/403 = registered) ==
+port 3000 -> 000
+port 8080 -> 000
+port 5000 -> 000
+saved: tools/diag-erf.out

@@ -1,0 +1,852 @@
+'use strict';
+/**
+ * NABZ — Emergency Full v2 (SinaER-grade)
+ * ادغام حرفه‌ای منطق اورژانس سینا داخل معماری نبض
+ * شامل: زون‌بندی استاندارد، ESI هوشمند + NEWS2، کدهای اورژانس با پروتکل زمانی،
+ * کاردکس پایه، KPIهای واقعی اورژانس، و پنل‌های فرماندهی
+ */
+
+const { h, sd } = require('../core/mod-helpers');
+const bus = require('../core/events');
+
+// ═══════════════════════════════════════════════════════════════
+// 1. زون‌بندی استاندارد اورژانس (هم‌راستا با سینا + بهبود)
+// ═══════════════════════════════════════════════════════════════
+const ZONES = [
+  { code: 'CPR',    label: 'اتاق CPR',           icon: '💔', beds: 5,  group: 'resuscitation', critical: true,  minNurse: 2, color: '#dc2626', description: 'احیای قلبی-ریوی، بیمار بحرانی، ایست قلبی' },
+  { code: 'TRAUMA', label: 'تروما',              icon: '🩸', beds: 5,  group: 'resuscitation', critical: true,  minNurse: 2, color: '#b91c1c', description: 'ترومای متعدد، MVA، سقوط از ارتفاع، چاقوخوردگی' },
+  { code: 'FAST',   label: 'FAST Track',         icon: '⚡', beds: 25, group: 'urgent',        critical: false, minNurse: 3, color: '#059669', description: 'بیماران ESI 4-5، سرپایی سریع' },
+  { code: 'ACUTE1', label: 'حاد ۱',              icon: '🏥', beds: 15, group: 'urgent',        critical: false, minNurse: 3, color: '#d97706', description: 'بیماران نیازمند پایش نزدیک' },
+  { code: 'ACUTE2', label: 'حاد ۲',              icon: '🏥', beds: 40, group: 'urgent',        critical: false, minNurse: 4, color: '#2563eb', description: 'بیماران مراقبت متوسط' },
+  { code: 'OR_OUT', label: 'اتاق عمل سرپایی',   icon: '🔪', beds: 4,  group: 'minor',         critical: false, minNurse: 1, color: '#7c3aed', description: 'اقدامات سرپایی، بخیه، گچ، درناژ' }
+];
+
+const ZONE_MAP = Object.fromEntries(ZONES.map(z => [z.code, z]));
+
+// ═══════════════════════════════════════════════════════════════
+// 2. ESI + موتور پیشنهاد هوشمند
+// ═══════════════════════════════════════════════════════════════
+const ESI = [
+  { level: 1, label: 'احیای فوری',   color: 'dng',  maxWait: 0,   examples: 'ایست قلبی، شوک، GCS ≤ ۸، آپنه' },
+  { level: 2, label: 'اورژانسی',     color: 'dng',  maxWait: 10,  examples: 'درد قفسه سینه فعال، دیسترس تنفسی، سکته حاد' },
+  { level: 3, label: 'فوری',         color: 'warn', maxWait: 30,  examples: 'درد شدید، تب بالا + علائم سیستمیک، شکستگی باز' },
+  { level: 4, label: 'غیرفوری',      color: 'info', maxWait: 60,  examples: 'درد خفیف تا متوسط، زخم سطحی، استفراغ ساده' },
+  { level: 5, label: 'سرپایی',       color: 'ok',   maxWait: 120, examples: 'علائم خفیف، نیاز به نسخه، تعویض پانسمان' }
+];
+
+// ═══════════════════════════════════════════════════════════════
+// 3. کدهای اورژانس با پروتکل زمانی (از سینا + گسترش)
+// ═══════════════════════════════════════════════════════════════
+const CODE_META = {
+  '247': {
+    label: 'کد ۲۴۷ — STEMI',
+    color: 'red',
+    targetMin: 90,
+    description: 'سکته حاد قلبی — فعال‌سازی تیم قلب و کت‌لب',
+    steps: [
+      { id: 'ecg',        name: 'ECG ۱۲ لید',           targetMin: 10 },
+      { id: 'troponin',   name: 'تروپونین',             targetMin: 20 },
+      { id: 'consult',    name: 'مشاوره قلب',           targetMin: 30 },
+      { id: 'cathlab',    name: 'فعال‌سازی کت‌لب',      targetMin: 60 },
+      { id: 'reperfusion',name: 'شروع ریپرفیوژن',       targetMin: 90 }
+    ]
+  },
+  '724': {
+    label: 'کد ۷۲۴ — Stroke',
+    color: 'purple',
+    targetMin: 60,
+    description: 'سکته مغزی حاد — CT و ترومبولیز / ترومبکتومی',
+    steps: [
+      { id: 'ct',         name: 'CT مغز بدون کنتراست',  targetMin: 25 },
+      { id: 'neuro',      name: 'مشاوره نورولوژی',      targetMin: 30 },
+      { id: 'labs',       name: 'آزمایش‌های فوری',      targetMin: 30 },
+      { id: 'decision',   name: 'تصمیم ترومبولیز',      targetMin: 45 },
+      { id: 'lyse',       name: 'شروع ترومبولیز/ترومبکتومی', targetMin: 60 }
+    ]
+  },
+  '99': {
+    label: 'کد ۹۹ — CPR',
+    color: 'rose',
+    targetMin: 0,
+    description: 'ایست قلبی — تیم احیا',
+    steps: [
+      { id: 'cpr_start',  name: 'شروع CPR',             targetMin: 0 },
+      { id: 'airway',     name: 'مدیریت راه هوایی',     targetMin: 2 },
+      { id: 'access',     name: 'دسترسی وریدی/داخل استخوانی', targetMin: 3 },
+      { id: 'rhythm',     name: 'آنالیز ریتم',          targetMin: 2 },
+      { id: 'rosc',       name: 'ROSC یا اعلام مرگ',    targetMin: 0 }
+    ]
+  },
+  'blue': {
+    label: 'کد آبی — احیا پزشکی',
+    color: 'blue',
+    targetMin: 0,
+    description: 'احیای پزشکی عمومی (غیر از ایست کامل)',
+    steps: [
+      { id: 'team', name: 'فراخوان تیم', targetMin: 1 },
+      { id: 'assess', name: 'ارزیابی اولیه', targetMin: 3 },
+      { id: 'stabilize', name: 'تثبیت', targetMin: 10 }
+    ]
+  },
+  'mci': {
+    label: 'بحران / حوادث جمعی (MCI)',
+    color: 'amber',
+    targetMin: 0,
+    description: 'Mass Casualty — تریاژ START و مدیریت منابع',
+    steps: [
+      { id: 'activate', name: 'فعال‌سازی طرح بحران', targetMin: 0 },
+      { id: 'triage_area', name: 'راه‌اندازی ناحیه تریاژ', targetMin: 5 },
+      { id: 'command', name: 'استقرار فرماندهی حادثه', targetMin: 10 },
+      { id: 'surge', name: 'فعال‌سازی تخت‌های مازاد', targetMin: 15 }
+    ]
+  }
+};
+
+// ═══════════════════════════════════════════════════════════════
+// 4. قالب‌های دستور (کاردکس) — از سینا
+// ═══════════════════════════════════════════════════════════════
+const ORDER_TEMPLATES = {
+  med: [
+    { item: 'آسپرین', dose: '325 mg', route: 'PO', frequency: 'یک‌بار' },
+    { item: 'کلوپیدوگرل', dose: '300 mg', route: 'PO', frequency: 'یک‌بار' },
+    { item: 'هپارین', dose: '60 U/kg', route: 'IV', frequency: 'بولوس' },
+    { item: 'پنتوپرازول', dose: '40 mg', route: 'IV', frequency: 'روزانه' },
+    { item: 'مورفین', dose: '4 mg', route: 'IV', frequency: 'یک‌بار' },
+    { item: 'فنتانیل', dose: '50 mcg', route: 'IV', frequency: 'یک‌بار' },
+    { item: 'اندانسترون', dose: '4 mg', route: 'IV', frequency: 'یک‌بار' },
+    { item: 'متوکلوپرامید', dose: '10 mg', route: 'IV', frequency: 'یک‌بار' },
+    { item: 'سفتریاکسون', dose: '1 g', route: 'IV', frequency: 'هر ۱۲ ساعت' },
+    { item: 'آموکسی‌سیلین-کلاوولانات', dose: '1.2 g', route: 'IV', frequency: 'هر ۸ ساعت' },
+    { item: 'سالبوتمول', dose: '5 mg', route: 'Neb', frequency: 'یک‌بار' },
+    { item: 'هیدروکورتیزون', dose: '100 mg', route: 'IV', frequency: 'یک‌بار' }
+  ],
+  lab: [
+    { item: 'CBC' }, { item: 'تروپونین I hs' }, { item: 'BUN/Cr' },
+    { item: 'الکترولیت (Na/K/Cl)' }, { item: 'ABG' }, { item: 'قند خون' },
+    { item: 'PT/INR' }, { item: 'PTT' }, { item: 'کشت خون' }, { item: 'لاکتات' },
+    { item: 'D-Dimer' }, { item: 'BNP / NT-proBNP' }, { item: 'لیپاز' }
+  ],
+  imaging: [
+    { item: 'گرافی قفسه سینه (CXR)' }, { item: 'CT مغز بدون کنتراست' },
+    { item: 'CT آنژیو ریه' }, { item: 'سونوگرافی شکم و لگن' },
+    { item: 'CT شکم با کنتراست' }, { item: 'گرافی اندام' },
+    { item: 'سونوگرافی FAST' }, { item: 'اکوکاردیوگرافی Bedside' }
+  ],
+  consult: [
+    { item: 'مشاوره قلب' }, { item: 'مشاوره نورولوژی' },
+    { item: 'مشاوره جراحی عمومی' }, { item: 'مشاوره ارتوپدی' },
+    { item: 'مشاوره جراحی اعصاب' }, { item: 'مشاوره داخلی' },
+    { item: 'مشاوره بیهوشی' }, { item: 'مشاوره عفونی' }
+  ],
+  nursing: [
+    { item: 'ECG ۱۲ لید' }, { item: 'مانیتورینگ قلبی مداوم' },
+    { item: 'اکسیژن با ماسک', dose: '6-10 L/min' },
+    { item: 'گذاشتن سوند فولی' }, { item: 'کنترل علائم حیاتی', frequency: 'هر ۱۵ دقیقه' },
+    { item: 'دو IV Line بزرگ' }, { item: 'نمونه‌گیری خون کامل' }
+  ],
+  procedure: [
+    { item: 'بخیه زخم' }, { item: 'آتل‌گیری' }, { item: 'لوله‌گذاری تراشه' },
+    { item: 'چست‌تیوب' }, { item: 'پریکاردیوسنتز' }, { item: 'کاهش دررفتگی' }
+  ]
+};
+
+// ═══════════════════════════════════════════════════════════════
+// 5. ابزارهای کمکی بالینی
+// ═══════════════════════════════════════════════════════════════
+function now() { return new Date().toISOString(); }
+function today() { return new Date().toISOString().slice(0, 10); }
+function minutesBetween(a, b) {
+  if (!a || !b) return null;
+  const ms = sd(b) - sd(a);
+  return ms >= 0 ? Math.round(ms / 60000) : null;
+}
+
+/** NEWS2 score (از سینا) */
+function news2(v) {
+  if (!v) return null;
+  let s = 0, n = 0;
+  if (v.rr != null) {
+    n++; s += v.rr <= 8 ? 3 : v.rr <= 11 ? 1 : v.rr <= 20 ? 0 : v.rr <= 24 ? 2 : 3;
+  }
+  if (v.spo2 != null) {
+    n++; s += v.spo2 <= 91 ? 3 : v.spo2 <= 93 ? 2 : v.spo2 <= 95 ? 1 : 0;
+  }
+  if (v.onOxygen) s += 2;
+  if (v.sbp != null) {
+    n++; s += v.sbp <= 90 ? 3 : v.sbp <= 100 ? 2 : v.sbp <= 110 ? 1 : v.sbp <= 219 ? 0 : 3;
+  }
+  if (v.hr != null) {
+    n++; s += v.hr <= 40 ? 3 : v.hr <= 50 ? 1 : v.hr <= 90 ? 0 : v.hr <= 110 ? 1 : v.hr <= 130 ? 2 : 3;
+  }
+  if (v.temp != null) {
+    n++; s += v.temp <= 35 ? 3 : v.temp <= 36 ? 1 : v.temp <= 38 ? 0 : v.temp <= 39 ? 1 : 2;
+  }
+  if (v.gcs != null) {
+    n++; s += v.gcs < 15 ? 3 : 0;
+  }
+  return n === 0 ? null : s;
+}
+
+/** پیشنهاد ESI بر اساس شکایت + علائم حیاتی + NEWS2 */
+function computeSuggestedESI(chiefComplaint, vitals) {
+  const cc = (chiefComplaint || '').toLowerCase();
+  const n2 = news2(vitals);
+  let level = 5;
+  const reasons = [];
+
+  // Red flags → ESI 1
+  if (vitals) {
+    if (vitals.gcs != null && vitals.gcs <= 8) { level = 1; reasons.push('GCS ≤ 8'); }
+    if (vitals.sbp != null && vitals.sbp < 80) { level = 1; reasons.push('شوک (SBP < 80)'); }
+    if (vitals.spo2 != null && vitals.spo2 < 85) { level = Math.min(level, 1); reasons.push('هیپوکسی شدید'); }
+    if (vitals.rr != null && (vitals.rr < 8 || vitals.rr > 35)) { level = Math.min(level, 1); reasons.push('نارسایی تنفسی'); }
+  }
+  if (/ایست قلب|کد ۹۹|بدون نبض|آپنه|سیانوز شدید/.test(cc)) {
+    level = 1; reasons.push('شکایت بحرانی');
+  }
+
+  // ESI 2
+  if (level > 2) {
+    if (n2 != null && n2 >= 7) { level = 2; reasons.push('NEWS2 ≥ 7'); }
+    if (vitals && vitals.sbp != null && vitals.sbp < 100) { level = 2; reasons.push('SBP < 100'); }
+    if (vitals && vitals.spo2 != null && vitals.spo2 < 92) { level = Math.min(level, 2); reasons.push('SpO2 < 92'); }
+    if (/درد قفسه سینه|تنگی نفس شدید|سکته|همی‌پارزی|تشنج|خونریزی فعال|ترومای متعدد|سقوط از ارتفاع/.test(cc)) {
+      level = Math.min(level, 2); reasons.push('شکایت پرخطر');
+    }
+  }
+
+  // ESI 3
+  if (level > 3) {
+    if (n2 != null && n2 >= 5) { level = 3; reasons.push('NEWS2 ۵-۶'); }
+    if (/درد شدید|تب بالا|استفراغ مکرر|شکستگی|ضربه به سر|خونریزی گوارشی/.test(cc)) {
+      level = Math.min(level, 3); reasons.push('شکایت متوسط-شدید');
+    }
+  }
+
+  // ESI 4
+  if (level > 4) {
+    if (/درد خفیف|زخم سطحی|تهوع|سردرد|عفونت ادراری|گلودرد/.test(cc)) {
+      level = 4; reasons.push('شکایت غیرفوری');
+    }
+  }
+
+  return { level, reasons, news2: n2, maxWait: ESI[level - 1].maxWait };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 6. Handlers
+// ═══════════════════════════════════════════════════════════════
+
+function initZoneBeds(ctx) {
+  const existing = h(ctx, 'beds').filter(b => b.area === 'ed' || b.zone);
+  if (existing.length > 0) return { initialized: false, count: existing.length };
+
+  const beds = [];
+  let id = 1;
+  for (const z of ZONES) {
+    for (let i = 1; i <= z.beds; i++) {
+      beds.push({
+        id: 'ED-' + z.code + '-' + String(i).padStart(2, '0'),
+        code: z.code + '-' + i,
+        zone: z.code,
+        area: 'ed',
+        label: z.label + ' #' + i,
+        status: 'empty',
+        patientId: null,
+        group: z.group,
+        critical: z.critical,
+        updatedAt: now()
+      });
+    }
+  }
+  for (const b of beds) ctx.store.put('beds', b);
+  return { initialized: true, count: beds.length, zones: ZONES.map(z => ({ code: z.code, beds: z.beds })) };
+}
+
+function overview(ctx) {
+  const visits = h(ctx, 'ed_visits').filter(v => !['discharged', 'transferred', 'lwbs', 'deceased', 'admitted'].includes(v.status));
+  const beds = h(ctx, 'beds').filter(b => b.area === 'ed' || b.zone);
+  const codes = h(ctx, 'ed_codes').filter(c => c.status === 'active');
+  const nowTs = Date.now();
+
+  const byZone = {};
+  for (const z of ZONES) {
+    const zb = beds.filter(b => b.zone === z.code);
+    const occupied = zb.filter(b => b.status === 'occupied').length;
+    byZone[z.code] = {
+      ...z,
+      total: zb.length || z.beds,
+      occupied,
+      empty: (zb.length || z.beds) - occupied,
+      patients: visits.filter(v => v.zone === z.code).length
+    };
+  }
+
+  const byEsi = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+  const waiting = [];
+  for (const v of visits) {
+    if (v.esi) byEsi[v.esi] = (byEsi[v.esi] || 0) + 1;
+    if (v.status === 'waiting_triage' || v.status === 'waiting_bed') {
+      const waitMin = minutesBetween(v.arrivalAt || v.arrivedAt, now());
+      waiting.push({ ...v, waitMin });
+    }
+  }
+  waiting.sort((a, b) => (a.esi || 5) - (b.esi || 5) || (b.waitMin || 0) - (a.waitMin || 0));
+
+  // KPIهای سریع
+  const allToday = h(ctx, 'ed_visits').filter(v => (v.arrivalAt || v.arrivedAt || '').startsWith(today()));
+  const doorToTriage = allToday.map(v => minutesBetween(v.arrivalAt || v.arrivedAt, v.triagedAt)).filter(x => x != null);
+  const doorToDoctor = allToday.map(v => minutesBetween(v.arrivalAt || v.arrivedAt, v.seenAt)).filter(x => x != null);
+
+  const avg = arr => arr.length ? Math.round(arr.reduce((a, b) => a + b, 0) / arr.length) : null;
+
+  return {
+    zones: byZone,
+    zoneList: ZONES,
+    activeVisits: visits.length,
+    byEsi,
+    activeCodes: codes,
+    waitingTop: waiting.slice(0, 12),
+    kpis: {
+      arrivalsToday: allToday.length,
+      avgDoorToTriage: avg(doorToTriage),
+      avgDoorToDoctor: avg(doorToDoctor),
+      bedsTotal: beds.length || ZONES.reduce((s, z) => s + z.beds, 0),
+      bedsOccupied: beds.filter(b => b.status === 'occupied').length,
+      occupancyPct: beds.length ? Math.round(beds.filter(b => b.status === 'occupied').length / beds.length * 100) : 0
+    },
+    esiDefs: ESI,
+    codeMeta: CODE_META,
+    generatedAt: now()
+  };
+}
+
+function listBeds(ctx) {
+  let beds = h(ctx, 'beds').filter(b => b.area === 'ed' || b.zone);
+  if (!beds.length) {
+    // auto-init if empty
+    initZoneBeds(ctx);
+    beds = h(ctx, 'beds').filter(b => b.area === 'ed' || b.zone);
+  }
+  if (ctx.query.zone) beds = beds.filter(b => b.zone === ctx.query.zone);
+  if (ctx.query.status) beds = beds.filter(b => b.status === ctx.query.status);
+  return { items: beds, total: beds.length, zones: ZONES };
+}
+
+function zoneBeds(ctx) {
+  const zone = ctx.params.zone;
+  const z = ZONE_MAP[zone];
+  if (!z) throw ctx.E.notFound('zone_not_found');
+  const beds = h(ctx, 'beds').filter(b => b.zone === zone);
+  const visits = h(ctx, 'ed_visits').filter(v => v.zone === zone && !['discharged', 'transferred', 'lwbs', 'deceased', 'admitted'].includes(v.status));
+  return { zone: z, beds, visits, occupied: beds.filter(b => b.status === 'occupied').length };
+}
+
+function registerVisit(ctx) {
+  const b = ctx.body || {};
+  if (!b.name && !b.patientName) throw ctx.E.badRequest('name_required');
+  const id = 'EDV-' + uid();
+  const rec = {
+    id,
+    patientId: b.patientId || null,
+    patientName: b.name || b.patientName,
+    age: b.age || null,
+    sex: b.sex || null,
+    nationalCode: b.nationalCode || null,
+    phone: b.phone || null,
+    arrivalMode: b.arrivalMode || 'walk_in',
+    chiefComplaint: b.chiefComplaint || b.cc || '',
+    allergies: b.allergies || '',
+    history: b.history || '',
+    esi: b.esi || null,
+    status: b.esi ? 'waiting_bed' : 'waiting_triage',
+    zone: null,
+    bedId: null,
+    arrivalAt: now(),
+    triagedAt: b.esi ? now() : null,
+    seenAt: null,
+    departedAt: null,
+    disposition: null,
+    createdBy: ctx.actor.id,
+    createdAt: now()
+  };
+  ctx.store.put('ed_visits', rec);
+  try { bus.emit('ed.visit.registered', { record: rec, actor: ctx.actor }); } catch (_) {}
+  return rec;
+}
+
+function triage(ctx) {
+  const v = ctx.store.get('ed_visits', ctx.params.id);
+  if (!v) throw ctx.E.notFound('visit_not_found');
+  const b = ctx.body || {};
+
+  // اگر ESI داده نشده، پیشنهاد بده
+  let esi = b.esi;
+  let suggestion = null;
+  if (!esi) {
+    suggestion = computeSuggestedESI(b.chiefComplaint || v.chiefComplaint, b.vitals);
+    esi = suggestion.level;
+  }
+
+  v.esi = Number(esi);
+  v.triageNote = b.note || b.triageNote || v.triageNote || '';
+  v.chiefComplaint = b.chiefComplaint || v.chiefComplaint;
+  v.triagedAt = now();
+  v.status = v.bedId ? 'in_treatment' : 'waiting_bed';
+  v.triagedBy = ctx.actor.id;
+
+  if (b.vitals) {
+    const vit = {
+      id: 'VIT-' + uid(),
+      visitId: v.id,
+      patientId: v.patientId,
+      ...b.vitals,
+      news2: news2(b.vitals),
+      recordedBy: ctx.actor.id,
+      recordedAt: now()
+    };
+    ctx.store.put('ed_vitals', vit);
+    v.lastVitalsId = vit.id;
+    v.lastNews2 = vit.news2;
+  }
+
+  ctx.store.put('ed_visits', v);
+  try { bus.emit('ed.visit.triaged', { record: v, actor: ctx.actor }); } catch (_) {}
+  return { visit: v, suggestion };
+}
+
+function suggestESI(ctx) {
+  const b = ctx.body || {};
+  return computeSuggestedESI(b.chiefComplaint || b.cc, b.vitals);
+}
+
+function assignZone(ctx) {
+  const v = ctx.store.get('ed_visits', ctx.params.id);
+  if (!v) throw ctx.E.notFound('visit_not_found');
+  const b = ctx.body || {};
+  const zone = b.zone;
+  if (!ZONE_MAP[zone]) throw ctx.E.badRequest('invalid_zone');
+
+  if (v.bedId) {
+    const old = ctx.store.get('beds', v.bedId);
+    if (old && old.visitId === v.id) { old.status = 'cleaning'; old.patientId = null; old.visitId = null; old.updatedAt = now(); ctx.store.put('beds', old); }
+    v.bedId = null;
+  }
+  // پیدا کردن تخت خالی
+  let bed = null;
+  if (b.bedId) {
+    bed = ctx.store.get('beds', b.bedId);
+  } else {
+    const free = h(ctx, 'beds').filter(x => x.zone === zone && x.status === 'empty');
+    bed = free[0] || null;
+  }
+
+  if (bed) {
+    bed.status = 'occupied';
+    bed.patientId = v.patientId || v.id;
+    bed.visitId = v.id;
+    bed.updatedAt = now();
+    ctx.store.put('beds', bed);
+    v.bedId = bed.id;
+  }
+
+  v.zone = zone;
+  v.status = 'in_treatment';
+  v.assignedAt = now();
+  v.assignedBy = ctx.actor.id;
+  ctx.store.put('ed_visits', v);
+
+  try { bus.emit('ed.visit.assigned', { record: v, bed, actor: ctx.actor }); } catch (_) {}
+  return { visit: v, bed };
+}
+
+function disposition(ctx) {
+  const v = ctx.store.get('ed_visits', ctx.params.id);
+  if (!v) throw ctx.E.notFound('visit_not_found');
+  const action = ctx.params.action; // admit | discharge | transfer | lwbs | deceased
+  if (['discharged', 'transferred', 'lwbs', 'deceased', 'admitted'].includes(v.status)) throw ctx.E.conflict('visit_already_closed');
+  const allowed = ['admit', 'discharge', 'transfer', 'lwbs', 'deceased'];
+  if (!allowed.includes(action)) throw ctx.E.badRequest('invalid_disposition');
+
+  const b = ctx.body || {};
+  v.disposition = action === 'admit' ? 'admitted' : action === 'discharge' ? 'discharged' : action;
+  v.dispositionNote = b.note || '';
+  v.status = v.disposition;
+  v.departedAt = now();
+  v.dispositionBy = ctx.actor.id;
+
+  // آزاد کردن تخت
+  if (v.bedId) {
+    const bed = ctx.store.get('beds', v.bedId);
+    if (bed) {
+      bed.status = 'cleaning';
+      bed.patientId = null;
+      bed.visitId = null;
+      bed.updatedAt = now();
+      ctx.store.put('beds', bed);
+    }
+  }
+
+  ctx.store.put('ed_visits', v);
+  try { bus.emit('ed.visit.disposition', { record: v, actor: ctx.actor }); } catch (_) {}
+  return v;
+}
+
+// ─── Codes ───
+function listCodes(ctx) {
+  let items = h(ctx, 'ed_codes');
+  if (ctx.query.status) items = items.filter(c => c.status === ctx.query.status);
+  items.sort((a, b) => sd(b.activatedAt) - sd(a.activatedAt));
+  return { items, meta: CODE_META };
+}
+
+function activateCode(ctx) {
+  const b = ctx.body || {};
+  const type = String(b.type || b.code || '').replace('code_', '');
+  const def = CODE_META[type];
+  if (!def) throw ctx.E.badRequest('invalid_code_type');
+
+  const id = 'CODE-' + type.toUpperCase() + '-' + uid();
+  const rec = {
+    id,
+    type,
+    label: def.label,
+    visitId: b.visitId || null,
+    patientId: b.patientId || null,
+    patientName: b.patientName || null,
+    activatedAt: now(),
+    activatedBy: ctx.actor.id,
+    activatedByName: ctx.actor.username || ctx.actor.name,
+    status: 'active',
+    targetMin: def.targetMin,
+    steps: def.steps.map(s => ({
+      id: s.id,
+      name: s.name,
+      targetMin: s.targetMin,
+      status: 'pending',
+      completedAt: null,
+      completedBy: null
+    })),
+    notes: b.note || ''
+  };
+  ctx.store.put('ed_codes', rec);
+  try { bus.emit('ed.code.activated', { record: rec, actor: ctx.actor }); } catch (_) {}
+  return rec;
+}
+
+function codeStep(ctx) {
+  const c = ctx.store.get('ed_codes', ctx.params.id);
+  if (!c) throw ctx.E.notFound('code_not_found');
+  ctx.body = ctx.body || {};
+  if (c.status !== 'active') throw ctx.E.conflict('code_not_active');
+
+  const stepId = ctx.body.step || ctx.body.stepId;
+  const step = c.steps.find(s => s.id === stepId || s.name === stepId);
+  if (!step) throw ctx.E.notFound('step_not_found');
+
+  step.status = ctx.body.status || 'done';
+  step.completedAt = now();
+  step.completedBy = ctx.actor.id;
+  step.note = ctx.body.note || '';
+
+  // اگر همه مراحل تمام شد
+  if (c.steps.every(s => s.status === 'done' || s.status === 'skipped')) {
+    c.status = 'resolved';
+    c.resolvedAt = now();
+    c.resolvedBy = ctx.actor.id;
+  }
+
+  ctx.store.put('ed_codes', c);
+  try { bus.emit('ed.code.step', { record: c, step, actor: ctx.actor }); } catch (_) {}
+  return c;
+}
+
+function resolveCode(ctx) {
+  const c = ctx.store.get('ed_codes', ctx.params.id);
+  if (!c) throw ctx.E.notFound('code_not_found');
+  c.status = 'resolved';
+  c.resolvedAt = now();
+  c.resolvedBy = ctx.actor.id;
+  c.resolutionNote = (ctx.body || {}).note || '';
+  ctx.store.put('ed_codes', c);
+  try { bus.emit('ed.code.resolved', { record: c, actor: ctx.actor }); } catch (_) {}
+  return c;
+}
+
+// ─── Orders / Cardex foundation ───
+function listOrders(ctx) {
+  let items = h(ctx, 'ed_orders');
+  if (ctx.query.visitId) items = items.filter(o => o.visitId === ctx.query.visitId);
+  if (ctx.query.patientId) items = items.filter(o => o.patientId === ctx.query.patientId);
+  if (ctx.query.status) items = items.filter(o => o.status === ctx.query.status);
+  items.sort((a, b) => sd(b.createdAt) - sd(a.createdAt));
+  return { items, templates: ORDER_TEMPLATES };
+}
+
+function createOrder(ctx) {
+  const b = ctx.body || {};
+  if (!b.visitId && !b.patientId) throw ctx.E.badRequest('visit_or_patient_required');
+  if (!b.item && !b.template) throw ctx.E.badRequest('item_required');
+
+  let item = b.item, dose = b.dose, route = b.route, frequency = b.frequency, category = b.category || 'med';
+  if (b.template && ORDER_TEMPLATES[b.category || 'med']) {
+    const t = ORDER_TEMPLATES[b.category || 'med'].find(x => x.item === b.template || x.item.includes(b.template));
+    if (t) {
+      item = t.item;
+      dose = dose || t.dose;
+      route = route || t.route;
+      frequency = frequency || t.frequency;
+      category = b.category || 'med';
+    }
+  }
+
+  const rec = {
+    id: 'ORD-' + uid(),
+    visitId: b.visitId || null,
+    patientId: b.patientId || null,
+    category,
+    item,
+    dose: dose || null,
+    route: route || null,
+    frequency: frequency || null,
+    priority: b.priority || 'routine', // stat | urgent | routine
+    note: b.note || '',
+    status: 'pending',
+    orderedBy: ctx.actor.id,
+    orderedByName: ctx.actor.username || ctx.actor.name,
+    createdAt: now(),
+    acknowledgedAt: null,
+    completedAt: null,
+    handledBy: null
+  };
+  ctx.store.put('ed_orders', rec);
+  try { bus.emit('ed.order.created', { record: rec, actor: ctx.actor }); } catch (_) {}
+  return rec;
+}
+
+function updateOrder(ctx) {
+  const o = ctx.store.get('ed_orders', ctx.params.id);
+  if (!o) throw ctx.E.notFound('order_not_found');
+  const b = ctx.body || {};
+  const action = b.action; // acknowledge | start | complete | cancel
+
+  if (action === 'acknowledge') {
+    o.status = 'acknowledged';
+    o.acknowledgedAt = now();
+    o.handledBy = ctx.actor.id;
+  } else if (action === 'start') {
+    o.status = 'in_progress';
+    o.handledBy = ctx.actor.id;
+  } else if (action === 'complete' || action === 'done') {
+    o.status = 'done';
+    o.completedAt = now();
+    o.handledBy = ctx.actor.id;
+  } else if (action === 'cancel') {
+    o.status = 'cancelled';
+    o.cancelledAt = now();
+    o.cancelledBy = ctx.actor.id;
+  } else {
+    // generic update
+    if (b.status) o.status = b.status;
+    if (b.note) o.note = b.note;
+  }
+  ctx.store.put('ed_orders', o);
+  try { bus.emit('ed.order.updated', { record: o, actor: ctx.actor }); } catch (_) {}
+  return o;
+}
+
+function stats(ctx) {
+  const days = Number(ctx.query.days) || 1;
+  const since = Date.now() - days * 86400000;
+  const visits = h(ctx, 'ed_visits').filter(v => sd(v.arrivalAt || v.arrivedAt) >= since);
+  const orders = h(ctx, 'ed_orders').filter(o => sd(o.createdAt) >= since);
+
+  const d2t = visits.map(v => minutesBetween(v.arrivalAt || v.arrivedAt, v.triagedAt)).filter(x => x != null);
+  const d2d = visits.map(v => minutesBetween(v.arrivalAt || v.arrivedAt, v.seenAt)).filter(x => x != null);
+  const los = visits.map(v => minutesBetween(v.arrivalAt || v.arrivedAt, v.departedAt)).filter(x => x != null);
+
+  const avg = a => a.length ? Math.round(a.reduce((x, y) => x + y, 0) / a.length) : null;
+  const med = a => {
+    if (!a.length) return null;
+    const s = [...a].sort((x, y) => x - y);
+    return s[Math.floor(s.length / 2)];
+  };
+
+  const byEsi = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+  const byDispo = {};
+  visits.forEach(v => {
+    if (v.esi) byEsi[v.esi]++;
+    if (v.disposition) byDispo[v.disposition] = (byDispo[v.disposition] || 0) + 1;
+  });
+
+  return {
+    periodDays: days,
+    totalVisits: visits.length,
+    byEsi,
+    byDisposition: byDispo,
+    doorToTriage: { avg: avg(d2t), median: med(d2t), n: d2t.length },
+    doorToDoctor: { avg: avg(d2d), median: med(d2d), n: d2d.length },
+    lengthOfStay: { avg: avg(los), median: med(los), n: los.length },
+    ordersTotal: orders.length,
+    ordersByCategory: orders.reduce((acc, o) => { acc[o.category] = (acc[o.category] || 0) + 1; return acc; }, {}),
+    generatedAt: now()
+  };
+}
+
+function listVisits(ctx) {
+  let items = h(ctx, 'ed_visits');
+  if (ctx.query.status) items = items.filter(v => v.status === ctx.query.status);
+  if (ctx.query.zone) items = items.filter(v => v.zone === ctx.query.zone);
+  if (ctx.query.esi) items = items.filter(v => String(v.esi) === String(ctx.query.esi));
+  items.sort((a, b) => sd(b.arrivalAt || b.arrivedAt) - sd(a.arrivalAt || a.arrivedAt));
+  return { items, total: items.length };
+}
+
+function getMeta(ctx) {
+  return {
+    zones: ZONES,
+    esi: ESI,
+    codes: CODE_META,
+    orderTemplates: ORDER_TEMPLATES,
+    arrivalModes: [
+      { code: 'walk_in', label: 'مراجعه شخصی' },
+      { code: 'ambulance', label: 'آمبولانس ۱۱۵' },
+      { code: 'private_amb', label: 'آمبولانس خصوصی' },
+      { code: 'referral', label: 'ارجاع' },
+      { code: 'transfer', label: 'انتقال بین‌بیمارستانی' },
+      { code: 'mci', label: 'سانحه دسته‌جمعی' }
+    ]
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Export
+// ═══════════════════════════════════════════════════════════════
+module.exports = {
+  handlers: {
+    overview,
+    listBeds,
+    zoneBeds,
+    initZoneBeds,
+    registerVisit,
+    listVisits,
+    triage,
+    suggestESI,
+    assignZone,
+    disposition,
+    listCodes,
+    activateCode,
+    codeStep,
+    resolveCode,
+    listOrders,
+    createOrder,
+    updateOrder,
+    stats,
+    getMeta
+  },
+  routes: [
+    { method: 'GET',  path: '/api/erf/overview',           handler: 'overview',       perm: 'ed.view' },
+    { method: 'GET',  path: '/api/erf/meta',               handler: 'getMeta',        perm: 'ed.view' },
+    { method: 'GET',  path: '/api/erf/stats',              handler: 'stats',          perm: 'ed.view' },
+    { method: 'GET',  path: '/api/erf/beds',               handler: 'listBeds',       perm: 'ed.view' },
+    { method: 'POST', path: '/api/erf/beds/init',          handler: 'initZoneBeds',   perm: 'ed.manage' },
+    { method: 'GET',  path: '/api/erf/zones/:zone/beds',   handler: 'zoneBeds',       perm: 'ed.view' },
+    { method: 'GET',  path: '/api/erf/visits',             handler: 'listVisits',     perm: 'ed.view' },
+    { method: 'POST', path: '/api/erf/visit',              handler: 'registerVisit',  perm: 'ed.triage' },
+    { method: 'POST', path: '/api/erf/visit/:id/triage',   handler: 'triage',         perm: 'ed.triage' },
+    { method: 'POST', path: '/api/erf/visit/:id/zone',     handler: 'assignZone',     perm: 'ed.triage' },
+    { method: 'POST', path: '/api/erf/visit/:id/:action',  handler: 'disposition',    perm: 'ed.triage' },
+    { method: 'POST', path: '/api/erf/suggest-esi',        handler: 'suggestESI',     perm: 'ed.triage' },
+    { method: 'GET',  path: '/api/erf/codes',              handler: 'listCodes',      perm: 'ed.view' },
+    { method: 'POST', path: '/api/erf/codes',              handler: 'activateCode',   perm: 'ed.code' },
+    { method: 'POST', path: '/api/erf/codes/:id/step',     handler: 'codeStep',       perm: 'ed.code' },
+    { method: 'POST', path: '/api/erf/codes/:id/resolve',  handler: 'resolveCode',    perm: 'ed.code' },
+    { method: 'GET',  path: '/api/erf/orders',             handler: 'listOrders',     perm: 'ed.view' },
+    { method: 'POST', path: '/api/erf/orders',             handler: 'createOrder',    perm: 'ed.order' },
+    { method: 'POST', path: '/api/erf/orders/:id',         handler: 'updateOrder',    perm: 'ed.order' }
+  ],
+  panels: [
+    { id: 'er_dashboard',   title: 'اورژانس — فرماندهی',     icon: '🚨', perm: 'ed.view', kind: 'erf_dashboard',   api: '/api/erf/overview' },
+    { id: 'er_beds',        title: 'نقشه تخت‌های اورژانس',   icon: '🛏️', perm: 'ed.view', kind: 'erf_beds',        api: '/api/erf/beds' },
+    { id: 'er_codes',       title: 'کدهای اورژانس',          icon: '🔴', perm: 'ed.view', kind: 'erf_codes',       api: '/api/erf/codes' },
+    { id: 'er_orders',      title: 'کاردکس اورژانس',         icon: '📋', perm: 'ed.view', kind: 'erf_orders',      api: '/api/erf/orders' },
+    { id: 'er_stats',       title: 'آمار و عملکرد اورژانس',  icon: '📊', perm: 'ed.view', kind: 'erf_stats',       api: '/api/erf/stats' }
+  ]
+};
+
+
+/* ERF-PATCH-V3 */
+let _uidSeq = 0;
+function uid() {
+  _uidSeq = (_uidSeq + 1) % 46656;
+  return Date.now().toString(36).toUpperCase() + _uidSeq.toString(36).toUpperCase().padStart(3, '0') + Math.random().toString(36).slice(2, 5).toUpperCase();
+}
+
+function setBedStatus(ctx) {
+  const bed = ctx.store.get('beds', ctx.params.id);
+  if (!bed) throw ctx.E.notFound('bed_not_found');
+  const st = (ctx.body || {}).status;
+  if (!['empty', 'cleaning', 'blocked'].includes(st)) throw ctx.E.badRequest('invalid_status');
+  if (st === 'empty' && bed.visitId) throw ctx.E.conflict('bed_has_patient');
+  bed.status = st;
+  bed.updatedAt = now();
+  ctx.store.put('beds', bed);
+  try { bus.emit('ed.bed.updated', { record: bed, actor: ctx.actor }); } catch (_) {}
+  return bed;
+}
+
+function markSeen(ctx) {
+  const v = ctx.store.get('ed_visits', ctx.params.id);
+  if (!v) throw ctx.E.notFound('visit_not_found');
+  if (v.seenAt) return v;
+  v.seenAt = now();
+  v.seenBy = ctx.actor.id;
+  if (v.status === 'waiting_doctor') v.status = 'in_treatment';
+  ctx.store.put('ed_visits', v);
+  try { bus.emit('ed.visit.seen', { record: v, actor: ctx.actor }); } catch (_) {}
+  return v;
+}
+
+function recordVitals(ctx) {
+  const v = ctx.store.get('ed_visits', ctx.params.id);
+  if (!v) throw ctx.E.notFound('visit_not_found');
+  const b = ctx.body || {};
+  const src = b.vitals || b;
+  const vit = {};
+  for (const k of ['rr', 'spo2', 'sbp', 'dbp', 'hr', 'temp', 'gcs']) {
+    if (src[k] !== undefined && src[k] !== null && src[k] !== '') {
+      const n = Number(src[k]);
+      if (!Number.isFinite(n)) throw ctx.E.badRequest('invalid_' + k);
+      vit[k] = n;
+    }
+  }
+  if (src.onOxygen !== undefined) vit.onOxygen = !!src.onOxygen;
+  if (!Object.keys(vit).length) throw ctx.E.badRequest('vitals_required');
+  const rec = { id: 'VIT-' + uid(), visitId: v.id, patientId: v.patientId, ...vit, news2: news2(vit), recordedBy: ctx.actor.id, recordedAt: now() };
+  ctx.store.put('ed_vitals', rec);
+  v.lastVitalsId = rec.id;
+  v.lastNews2 = rec.news2;
+  ctx.store.put('ed_visits', v);
+  try { bus.emit('ed.vitals.recorded', { record: rec, visit: v, actor: ctx.actor }); } catch (_) {}
+  return { vitals: rec, visit: v };
+}
+
+function listVitals(ctx) {
+  const items = h(ctx, 'ed_vitals').filter(x => x.visitId === ctx.params.id);
+  items.sort((a, b) => sd(a.recordedAt) - sd(b.recordedAt));
+  return { items, total: items.length };
+}
+
+Object.assign(module.exports.handlers, { setBedStatus, markSeen, recordVitals, listVitals });
+module.exports.routes.push(
+  { method: 'POST', path: '/api/erf/beds/:id/status',   handler: 'setBedStatus', perm: 'ed.triage' },
+  { method: 'POST', path: '/api/erf/visit/:id/seen',     handler: 'markSeen',     perm: 'ed.triage' },
+  { method: 'POST', path: '/api/erf/visit/:id/vitals',   handler: 'recordVitals', perm: 'ed.triage' },
+  { method: 'GET',  path: '/api/erf/visit/:id/vitals',   handler: 'listVitals',   perm: 'ed.view' }
+);
+// the generic /visit/:id/:action must come last so it can never shadow the specific routes
+(function () {
+  const r = module.exports.routes;
+  const i = r.findIndex(x => x.method === 'POST' && x.path === '/api/erf/visit/:id/:action');
+  if (i > -1) { const g = r.splice(i, 1)[0]; r.push(g); }
+})();

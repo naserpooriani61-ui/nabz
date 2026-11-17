@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta name="theme-color" content="#1a5fb4">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="manifest" href="/manifest.json">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0a0f1e">
+<title>نبض — NABZ</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div id="app">
+<header id="header" style="display:none">
+<div class="logo">🫀 <span>نبض</span><span id="liveDot" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#f59e0b;margin-right:8px;box-shadow:0 0 6px rgba(245,158,11,0.5);transition:all 0.3s" title="در حال اتصال..."></span></div>
+<div style="flex:1"></div>
+<button class="hbtn" onclick="NABZ.openQRScanner()" title="اسکن QR">📷</button>
+<button class="hbtn" onclick="NABZ.showSearch()" title="جستجو">🔍</button>
+<button class="hbtn" onclick="NABZ.showAlerts()" title="اعلان‌ها">🔔<span id="nc" class="badge"></span></button>
+<button class="hbtn" onclick="NABZ.refresh()" title="بازخوانی" style="display:flex;flex-direction:column;align-items:center;line-height:1;font-size:14px"><span>🔄</span><span style="font-size:8px;margin-top:1px">بازخوانی</span></button>
+<button class="hbtn" onclick="NABZ.logout()" title="خروج" style="display:flex;flex-direction:column;align-items:center;line-height:1;font-size:14px"><span>🚪</span><span style="font-size:8px;margin-top:1px">خروج</span></button>
+</header>
+<nav id="sidebar"></nav>
+<main id="main">
+<div id="loginView" class="login">
+<div class="lcard">
+<div>🫀</div>
+<h1>نبض</h1>
+<p style="color:var(--fg-2);font-size:12px;margin-bottom:20px;text-align:center">سیستم‌عامل عصبی بیمارستان</p>
+<form id="lf">
+<input id="u" placeholder="نام کاربری" autocomplete="username" required>
+<input id="p" type="password" placeholder="رمز" autocomplete="current-password" required>
+<button type="submit">ورود به سیستم</button>
+<div id="le" class="err"></div>
+</form>
+<div class="hint">admin / nabz@2026</div>
+</div>
+</div>
+<div id="content" style="display:none"></div>
+</main>
+</div>
+<script src="/app.js?v=mwek84qa"></script>
+<script src="/extra.js?v=mwek84qa"></script>
+<script src="/voice.js?v=mwek84qa"></script>
+<script src="/voice-init.js?v=mwek84qa"></script>
+<script src="/documents.js?v=mwek84qa"></script>
+<script src="/scanner.js?v=mwek84qa"></script>
+<script src="/ops2.js?v=mwek84qa"></script>
+<script src="/live.js?v=mwek84qa"></script>
+<script src="/offline.js?v=mwek84qa"></script>
+<script src="/offline-init.js?v=mwek84qa"></script>
+<script src="/cdss.js?v=mwek84qa"></script>
+<script src="/flow.js?v=mwek84qa"></script>
+<script>if("serviceWorker" in navigator)navigator.serviceWorker.register("/sw.js").catch(()=>{});</script>
+<script src="/sa.js?v=mwek84qa"></script>
+<script src="/sa-init.js?v=mwek84qa"></script>
+<script src="/sa-extra.js?v=mwek84qa"></script>
+<script src="/sa-advanced.js?v=mwek84qa"></script>
+<script src="/encounters-ui.js?v=mwek84qa"></script>
+<script src="/clinical-workflow-ui.js?v=mwek84qa"></script>
+<script src="/workflow-ui.js?v=mwek84qa"></script>
+<script src="/emergency-ui.js?v=mwek84qa"></script>
+<script src="/role-dashboards-ui.js?v=mwek84qa"></script>
+<script src="/surgical-ui.js?v=mwek84qa"></script>
+<script src="/blood-bank-ui.js?v=mwek84qa"></script>
+<script src="/safety-ui.js?v=mwek84qa"></script>
+<script src="/education-ui.js?v=mwek84qa"></script>
+<script src="/pharmacy-ui.js?v=mwek84qa"></script>
+<script src="/education-studio-ui.js?v=mwepjb56"></script>
+<script src="/zz_ui_fixes.js?v=mwek84qa"></script>
+<script src="/zz_pretty.js?v=mwek84qa"></script>
+<script src="/hops_ui.js?v=mwek84qa"></script>
+<script src="/zz_admission.js?v=mwek84qa"></script>
+<script src="/requests_ui.js?v=mwek84qa"></script>
+<script src="/perm_admin_ui.js?v=mwek84qa"></script>
+<script src="/code_manager_ui.js?v=mwek84qa"></script>
+<script src="/zz_missing_handlers.js?v=mwek84qa"></script>
+<script src="/roster_ui.js?v=mwek84qa"></script>
+<script src="/zz_dispatch.js?v=mwek84qa"></script>
+<script src="/oncall_ui.js?v=mwek84qa"></script>
+<script src="/nurse_coverage_ui.js?v=mwek84qa"></script>
+<script src="/care_team_ui.js?v=mwek84qa"></script>
+<script src="/order_sets_intelligence_ui.js?v=mwek84qa"></script>
+<script src="/backup_ui.js?v=mwek84qa"></script>
+<script src="/sysaudit_ui.js?v=mwek84qa"></script>
+<script src="/stage15_ui.js?v=mwek84qa"></script>
+<script src="/stage14_ui.js?v=mwek84qa"></script>
+<script src="/enhancement_ui_v6.js?v=mwek84qa"></script>
+<script src="/competency_ui.js?v=mwek84qa"></script>
+<script src="/adaptive_learning_ui.js?v=mwek84qa"></script>
+<script src="/quality_aggregator_ui.js?v=mwek84qa"></script>
+<script src="/nursing_handoff_ui.js?v=mwek84qa"></script>
+<script src="/handoff_ai_ui.js?v=1794636351114"></script>
+<script src="/nursing_care_plan_ui.js?v=mwek84qa"></script>
+<script src="/mar_advanced_ui.js?v=mwek84qa"></script>
+<script src="/cdss_v2_patch.js?v=mwek84qa"></script>
+<script src="/password_change.js?v=mwek84qa"></script>
+<script src="/admin_pw_config_ui.js?v=mwek84qa"></script>
+<script src="/restraint_ui.js?v=mwekdblj"></script>
+<script src="/zz_drawer_v3.js?v=mwekk2ol"></script>
+<script src="/facilities-ui.js?v=mwerdr3l"></script>
+<script src="/facilities-ui-p2.js?v=mwerdr3l"></script>
+<script src="/facilities-ui-p3.js?v=mwerdr3l"></script>
+<script src="/facilities-ui-p4.js?v=mwerdr3l"></script>
+<script src="/facilities-shim.js?v=mwerm1i6"></script>
+<script src="/facilities-bedboard-enhance.js?v=mwes2w1b"></script>
+<script src="/clinical_hub_ui.js?v=mweye5gz"></script>
+<script src="/nursing_station_ui.js?v=mweyhiv9"></script>
+<script src="/rounds_hub_ui.js?v=mweynigd"></script>
+<script src="/nursing_mode_ui.js?v=1794583741953"></script>
+<script src="/rounds_v2_ui.js?v=1794596160610"></script>
+<script src="/alerts_hub_ui.js?v=1794603993302"></script>
+<script src="/teaching_mode_ui.js?v=1794604356189"></script>
+  <script src="/nursing_station_v2_ui.js?v=1794637042646"></script>
+  <script src="/nursing_workspace_ui.js?v=1794638484444"></script>
+  <script src="/nursing_transfusion_ui.js?v=1794639276424"></script>
+  <script src="/nursing_ventilator_ui.js?v=1794639276424"></script>
+    <script src="/nursing_console_ui.js?v=1794672952739"></script>
+  <script src="/head_nurse_ui.js?v=1794672952739"></script>
+<script src="/zz_pretty_clinical.js?v=99"></script>
+<script src="/zz_ed_master.js?v=999"></script>
+<script src="/kardex_ui.js"></script>
+<script src="/kardex_shift_ui.js"></script>
+<script src="/handover_print.js"></script>
+<script src="/alert_stream_ui.js"></script>
+<script src="/system_status_ui.js"></script>
+<script src="/offline_ui.js"></script>
+  <script src="mar_patient_ui.js?v=1794884693367"></script>
+<script src="/vitals_ui.js"></script>
+
+
+<script>
+  window.addEventListener('load', function() {
+    window.NABZ.openMarInteractive = function(patientId) {
+      var b = document.querySelector('.bs-backdrop');
+      if (b) b.remove();
+      if (!patientId) return;
+      try { history.replaceState(null, '', '/kind/mar_patient?patientId=' + encodeURIComponent(patientId)); } catch(_) {}
+      if (typeof window.NABZ.show === 'function') window.NABZ.show('mar_patient', { patientId: patientId });
+    };
+  });
+</script>
+
+</body>
+</html>

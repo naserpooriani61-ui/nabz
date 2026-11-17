@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+
+# Logs and temporary
+*.log
+*.tmp
+*.temp
+.DS_Store
+
+# Backup files (should not be committed)
+*.bak
+*.bak-*
+*before-*
+*.old
+
+# Large or sensitive runtime data (optional - uncomment if you want)
+# data/sa_assignments.json
+# data/sa_demands.json
+# data/event_log_*.json
+
+# Environment
+.env
+.env.local
+
+# OS
+Thumbs.db
+
+# runtime data: never commit
+data/
+
+# runtime data: never commit
+backups/
