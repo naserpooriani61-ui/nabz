@@ -148,10 +148,8 @@ module.exports = {
   
   ],
   panels: [
-    { id: 'ed',    title: 'اورژانس',  icon: '🚨', perm: 'ed.view',        kind: 'list',  api: '/api/emergency/visits', fields: ['patientName','esiLevel','chiefComplaint','status'] },
-    { id: 'codes', title: 'کدها',     icon: '🔴', perm: 'ed.view',        kind: 'list',  api: '/api/emergency/codes',  fields: ['codeLabel','patientName','status'] },
-    { id: 'mci',   title: 'MCI',      icon: '🌐', perm: 'ed.view',        kind: 'list',  api: '/api/emergency/mci',    fields: ['alertLevel','incidentType','status'] },
-    { id: 'stats', title: 'آمار ED',   icon: '📊', perm: 'ed.view',        kind: 'stats', api: '/api/emergency/stats' }
+    // NOTE: Panels moved to emergency_full.js (unified ER Command Center).
+    // This module now provides API only: visits, triage, codes, MCI, stats.
   ]
 };
 

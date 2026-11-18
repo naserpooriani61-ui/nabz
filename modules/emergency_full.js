@@ -251,10 +251,7 @@ module.exports = {
     { method:'GET',  path:'/api/erf/stats',           handler:'stats',          perm:'ed.view' }
   ],
   panels: [
-    { id:'er_dashboard', title:'اورژانس — فرماندهی',    icon:'🚨', perm:'ed.view', kind:'erf_dashboard', api:'/api/erf/overview' },
-    { id:'er_beds',      title:'نقشه تخت‌های اورژانس',  icon:'🛏️', perm:'ed.view', kind:'erf_beds',      api:'/api/erf/beds' },
-    { id:'er_codes',     title:'کدهای اورژانس',         icon:'🔴', perm:'ed.view', kind:'erf_codes',     api:'/api/erf/codes' },
-    { id:'er_orders',    title:'کاردکس اورژانس',        icon:'📋', perm:'ed.view', kind:'erf_orders',    api:'/api/erf/orders' },
-    { id:'er_stats',     title:'آمار و عملکرد اورژانس', icon:'📊', perm:'ed.view', kind:'erf_stats',     api:'/api/erf/stats' }
+    { id:'er_command', title:'🚨 مرکز فرماندهی اورژانس', icon:'🚨', perm:'ed.view',
+      kind:'erf_command', api:'/api/erf/overview' }
   ]
 };
