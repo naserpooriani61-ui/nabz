@@ -112,6 +112,73 @@ const handlers = {
   },
 
   // ─── Stats ───
+
+    erfOverview: (ctx) => {
+    const visits = h(ctx, 'ed_visits');
+    const codes = h(ctx, 'ed_codes');
+    const beds = h(ctx, 'beds') || []; // Fallback if beds store is named differently
+    const orders = h(ctx, 'orders') || [];
+    
+    const now = Date.now();
+    const todayStart = now - 86400000;
+    
+    // 1. Patients Logic (matching dashboard.tsx)
+    const activePatients = visits.filter(v => !['closed', 'discharged'].includes(v.status));
+    const waitingTriage = activePatients.filter(v => v.status === 'waiting_triage').sort((a, b) => (a.arrivalMode === 'ems' ? -1 : 0) - (b.arrivalMode === 'ems' ? -1 : 0) || a.arrivalAt - b.arrivalAt);
+    const waitingBed = activePatients.filter(v => v.status === 'waiting_bed').sort((a, b) => (a.esiLevel || 9) - (b.esiLevel || 9) || a.arrivalAt - b.arrivalAt);
+    const notSeen = activePatients.filter(v => v.esiLevel && !v.seenAt);
+    
+    // ESI Target Minutes (from Sina-ER schema)
+    const ESI_TARGET = { 1: 0, 2: 10, 3: 30, 4: 60, 5: 120 };
+    const overdue = notSeen.filter(v => {
+      const waitMin = (now - v.arrivalAt) / 60000;
+      return waitMin > Math.max(ESI_TARGET[v.esiLevel] || 30, 5);
+    });
+    
+    const avgWait = notSeen.length ? notSeen.reduce((sum, v) => sum + ((now - v.arrivalAt) / 60000), 0) / notSeen.length : 0;
+    
+    // 2. Beds Logic (matching beds.tsx)
+    const usableBeds = beds.filter(b => b.status !== 'blocked');
+    const occupiedBeds = beds.filter(b => b.status === 'occupied');
+    
+    // Zone mapping (from Sina-ER ZONES constant)
+    const ZONES = [
+      { key: 'cpr', label: 'اتاق CPR', desc: 'احیای قلبی ریوی' },
+      { key: 'trauma', label: 'تروما', desc: 'آسیب‌های تروماتیک' },
+      { key: 'fast', label: 'FAST Track', desc: 'بیماران کم‌خطر و سریع' },
+      { key: 'acute1', label: 'حاد ۱', desc: 'بیماری‌های داخلی حاد' },
+      { key: 'acute2', label: 'حاد ۲', desc: 'بیماری‌های داخلی نیمه‌حاد' },
+      { key: 'or', label: 'اتاق عمل سرپایی', desc: 'جراحی‌های کوچک' }
+    ];
+    
+    // 3. Orders & Alerts Logic
+    const statOrders = orders.filter(o => o.priority === 'stat' && !['done', 'cancelled'].includes(o.status));
+    const pendingOrders = orders.filter(o => o.status === 'pending');
+    
+    // NEDOCS-lite Crowding Index
+    const crowd = Math.min(200, Math.round((activePatients.length / Math.max(usableBeds.length, 1)) * 100 * 0.7 + waitingTriage.length * 4 + waitingBed.length * 3 + overdue.length * 3));
+    
+    return {
+      patients: activePatients,
+      beds: beds,
+      codes: codes.filter(c => c.status === 'active'),
+      orders: { stat: statOrders, pending: pendingOrders },
+      metrics: {
+        totalActive: activePatients.length,
+        todayTotal: visits.filter(v => v.arrivalAt > todayStart).length,
+        waitingTriage: waitingTriage.length,
+        waitingBed: waitingBed.length,
+        boarding: activePatients.filter(v => v.status === 'awaiting_disposition').length,
+        overdue: overdue.length,
+        avgWait: Math.round(avgWait),
+        crowdIndex: crowd,
+        occupancyPct: usableBeds.length ? Math.round((occupiedBeds.length / usableBeds.length) * 100) : 0
+      },
+      zones: ZONES,
+      esiDist: [1, 2, 3, 4, 5].map(e => ({ esi: e, count: activePatients.filter(v => v.esiLevel === e).length }))
+    };
+  },
+  
   edStats: (ctx) => {
     const visits = h(ctx, 'ed_visits');
     const codes = h(ctx, 'ed_codes');
@@ -129,6 +196,12 @@ const handlers = {
       codesActive: codes.filter(c => c.status === 'active').length,
       mciActive: mci.filter(m => m.status === 'active').length
     };
+  },
+  edNursingDashboard: (ctx) => {
+    const patientId = (ctx.query && ctx.query.patientId) || (ctx.params && ctx.params.patientId) || '';
+    const p = h(ctx, 'ed_visits').find(x => x.id == patientId || x.patientId == patientId);
+    const orders = h(ctx, 'orders').filter(o => o.patientId == patientId && o.status === 'pending');
+    return { patient: p, pendingOrders: orders };
   }
 };
 
@@ -141,17 +214,21 @@ module.exports = {
     { method: 'POST', path: '/api/emergency/codes',       handler: 'codeActivate', perm: 'ed.code.activate' },
     { method: 'GET',  path: '/api/emergency/mci',         handler: 'mci',          perm: 'ed.view' },
     { method: 'POST', path: '/api/emergency/mci',         handler: 'mciActivate',  perm: 'ed.mci.activate' },
+    { method: 'GET',  path: '/api/erf/overview',      handler: 'erfOverview',  perm: 'ed.view' },
     { method: 'GET',  path: '/api/emergency/stats',       handler: 'edStats',      perm: 'ed.view' },
     { method: 'POST', path: '/api/emergency/visits/:id/triage', handler: 'visitTriage', perm: 'ed.triage' },
     { method: 'POST', path: '/api/emergency/codes/:id/step', handler: 'codeStep',  perm: 'ed.code.activate' },
-    { method: 'POST', path: '/api/emergency/codes/:id/close', handler: 'codeClose', perm: 'ed.code.activate' }
+    { method: 'POST', path: '/api/emergency/codes/:id/close', handler: 'codeClose', perm: 'ed.code.activate' },
+    { method: 'GET',  path: '/api/ed/nursing_dashboard', handler: 'edNursingDashboard', perm: 'ed.view' },
   
   ],
   panels: [
-    // NOTE: Panels moved to emergency_full.js (unified ER Command Center).
-    // This module now provides API only: visits, triage, codes, MCI, stats.
+    { id: 'ed_triage', module: 'emergency', title: 'تریاژ هوشمند', icon: '🩺', perm: 'ed.triage', kind: 'ed_triage' },
+    { id: 'ed_nursing', module: 'emergency', title: 'فضای کار پرستاری', icon: '💉', perm: 'ed.view', kind: 'ed_nursing' }
   ]
 };
 
 // ── ED core extension (28A): writer-based lifecycle, board, ESI suggestion ──
 try { require('../core/domain/ed-api').extend(module.exports); } catch (e) { console.error('[ed-core] extend failed:', e && e.message); }
+// ── ED ops extension (28B): beds, bed assignment, patient creation, MCI ──
+try { require('../core/domain/ed-ops').extend(module.exports); } catch (e) { console.error('[ed-ops] extend failed:', e && e.message); }

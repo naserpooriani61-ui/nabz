@@ -252,6 +252,6 @@ module.exports = {
   ],
   panels: [
     { id:'er_command', title:'🚨 مرکز فرماندهی اورژانس', icon:'🚨', perm:'ed.view',
-      kind:'erf_command', api:'/api/erf/overview' }
+      kind:'ed_cc', api:'/api/erf/overview' }
   ]
 };

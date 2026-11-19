@@ -211,11 +211,11 @@
   var tries = 0;
   (function ready() {
     if (window.NABZ && typeof NABZ.registerKind === 'function') {
-      NABZ.registerKind('erf_dashboard', function() { showDashboard(); });
-      NABZ.registerKind('erf_beds', function() { showBeds(); });
-      NABZ.registerKind('erf_codes', function() { showCodes(); });
-      NABZ.registerKind('erf_orders', function() { showOrders(); });
-      NABZ.registerKind('erf_stats', function() { showStats(); });
+      NABZ.registerKind('_disabled_erf_dashboard', function() { showDashboard(); });
+      NABZ.registerKind('_disabled_erf_beds', function() { showBeds(); });
+      NABZ.registerKind('_disabled_erf_codes', function() { showCodes(); });
+      NABZ.registerKind('_disabled_erf_orders', function() { showOrders(); });
+      NABZ.registerKind('_disabled_erf_stats', function() { showStats(); });
       console.log('[ED-Master] Registered all 5 superhuman ERF panels ✓');
       return;
     }

@@ -685,3 +685,6 @@ async function showNeural() {
 })();
 
 NABZ.boot();
+
+// expose NABZ to window for inline onclick handlers
+window.NABZ = NABZ;
