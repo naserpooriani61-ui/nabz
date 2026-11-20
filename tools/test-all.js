@@ -96,23 +96,62 @@ try {
   track('vitals', v2.id);
   ok('critical vitals → newsLevel critical', v2.newsLevel === 'critical');
 
-  // ────── 4. MAR ──────
-  console.log('\n[4] MAR');
-  const mar1 = { id: store.uid('mar'), orderId: o1.id, patientId: pid, patientName: 'تست', drugName: 'Test', dose: '1mg', route: 'IV', scheduledAt: new Date(Date.now() - 60000).toISOString(), status: 'scheduled', isHighAlert: false };
-  store.put('mar', mar1);
-  const ma = mw.administer(ctx, mar1.id, { fiveRights: { attested: true } });
-  ok('administer → given', ma.status === 'given');
+  // ────── 4. MAR (safety-grade) ──────
+  console.log('\n[4] MAR (safety)');
 
-  const mar2 = { id: store.uid('mar'), orderId: o1.id, patientId: pid, patientName: 'تست', drugName: 'T2', dose: '1mg', route: 'PO', scheduledAt: new Date().toISOString(), status: 'scheduled', isHighAlert: false };
-  store.put('mar', mar2);
-  const mr = mw.refuse(ctx, mar2.id, { reason: 'patient refused' });
-  ok('refuse → refused', mr.status === 'refused');
+  const mkMar = (name, highAlert, status) => {
+    const m = {
+      id: store.uid('mar'), orderId: o1.id, patientId: pid, patientName: 'تست',
+      drugName: name, dose: '1mg', route: 'IV',
+      scheduledAt: new Date().toISOString(),
+      status: status || 'scheduled', isHighAlert: !!highAlert
+    };
+    store.put('mar', m);
+    return m;
+  };
+  const FULL_RIGHTS = { patient: true, drug: true, dose: true, route: true, time: true };
+  const actorId = (ctx.actor && (ctx.actor.id || ctx.actor.username)) || 'usr_test';
 
-  const mar3 = { id: store.uid('mar'), orderId: o1.id, patientId: pid, patientName: 'تست', drugName: 'T3', dose: '1mg', route: 'PO', scheduledAt: new Date().toISOString(), status: 'due', isHighAlert: false };
-  store.put('mar', mar3);
-  const ms = mw.miss(ctx, mar3.id, { reason: 'overdue' });
-  ok('miss (from due, NEW transition) → missed', ms.status === 'missed');
+  // ── 1. administer with full five rights ──
+  const mA1 = mkMar('Aspirin');
+  const mR1 = mw.administer(ctx, mA1.id, { fiveRights: FULL_RIGHTS });
+  ok('administer with full five rights → given', mR1.status === 'given');
 
+  // ── 2. administer without full five rights → rejected ──
+  const mA2 = mkMar('Aspirin2');
+  let throwsNoRights = false;
+  try { mw.administer(ctx, mA2.id, { fiveRights: { attested: true } }); }
+  catch (e) { throwsNoRights = /five_rights_incomplete/.test(String(e.message || e.code || '')); }
+  ok('administer with incomplete five rights → rejected', throwsNoRights);
+
+  // ── 3. high-alert without witness → rejected ──
+  const mH1 = mkMar('Morphine', true);
+  let throwsNoWitness = false;
+  try { mw.administer(ctx, mH1.id, { fiveRights: FULL_RIGHTS }); }
+  catch (e) { throwsNoWitness = /witness_required/.test(String(e.message || e.code || '')); }
+  ok('high-alert without witness → rejected', throwsNoWitness);
+
+  // ── 4. high-alert with self witness → rejected ──
+  const mH2 = mkMar('Heparin', true);
+  let throwsSelfWitness = false;
+  try { mw.administer(ctx, mH2.id, { fiveRights: FULL_RIGHTS, witnessId: actorId }); }
+  catch (e) { throwsSelfWitness = /witness_cannot_be_self/.test(String(e.message || e.code || '')); }
+  ok('high-alert with self witness → rejected', throwsSelfWitness);
+
+  // ── 5. high-alert with valid witness → given ──
+  const mH3 = mkMar('Insulin', true);
+  const mHR = mw.administer(ctx, mH3.id, { fiveRights: FULL_RIGHTS, witnessId: 'usr_witness_test' });
+  ok('high-alert with valid witness → given', mHR.status === 'given');
+
+  // ── 6. refuse → refused ──
+  const mR2 = mkMar('Med-R2');
+  const mRef = mw.refuse(ctx, mR2.id, { reason: 'patient refused' });
+  ok('refuse → refused', mRef.status === 'refused');
+
+  // ── 7. miss → missed (from due state) ──
+  const mM1 = mkMar('Med-M1', false, 'due');
+  const mMiss = mw.miss(ctx, mM1.id, { reason: 'overdue' });
+  ok('miss from due → missed', mMiss.status === 'missed');
   // ────── 5. Consults ──────
   console.log('\n[5] Consults');
   const c1 = cw.create(ctx, { patientId: pid, targetService: 'cardio', question: 'chest pain' });

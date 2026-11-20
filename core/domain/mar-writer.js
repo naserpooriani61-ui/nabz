@@ -49,6 +49,25 @@ const EVENTS = {
   cancel:     'kardex.mar.cancelled'
 };
 
+const HIGH_ALERT_PATTERNS = [
+  /مورفین|morphine/i, /هپارین|heparin/i, /انسولین|insulin/i,
+  /پتاسیم|potassium|\bKCl\b/i, /وارفارین|warfarin/i,
+  /اپی‌نفرین|epinephrine|آدرنالین|adrenaline/i, /نوراپی‌نفرین|norepinephrine/i,
+  /آمیودارون|amiodarone/i, /دیگوکسین|digoxin/i, /متوترکسات|methotrexate/i,
+  /شیمی‌درمانی|chemo/i, /فنتانیل|fentanyl/i, /میدازولام|midazolam/i
+];
+function _isHighAlert(mar) {
+  if (!mar) return false;
+  if (mar.isHighAlert === true) return true;
+  const s = String(mar.drugName || mar.item || '') + ' ' + String(mar.name || '');
+  for (const r of HIGH_ALERT_PATTERNS) if (r.test(s)) return true;
+  return false;
+}
+function _allRightsTrue(fr) {
+  if (!fr || typeof fr !== 'object') return false;
+  return ['patient', 'drug', 'dose', 'route', 'time'].every(k => fr[k] === true);
+}
+
 function partial(ctx, id, opts) {
   const o = opts || {};
   if (o.givenDose == null) throw _err(ctx, 'mar:given_dose_required');
@@ -101,18 +120,31 @@ function _transition(ctx, id, action, opts) {
 
 function administer(ctx, id, opts) {
   const o = opts || {};
-  if (!o.fiveRights) throw _err(ctx, 'mar:five_rights_required');
+  const mar = _store(ctx).get('mar', id);
+  if (!mar) throw _err(ctx, 'mar:not_found:' + id);
+  if (!_allRightsTrue(o.fiveRights)) throw _err(ctx, 'mar:five_rights_incomplete');
+  const highAlert = _isHighAlert(mar);
+  const actorId = ctx.actor && (ctx.actor.id || ctx.actor.username);
+  if (highAlert) {
+    if (!o.witnessId) throw _err(ctx, 'mar:witness_required_high_alert');
+    if (o.witnessId === actorId) throw _err(ctx, 'mar:witness_cannot_be_self');
+  }
   return _transition(ctx, id, 'administer', {
-    extras: { fiveRights: o.fiveRights, witnessedBy: o.witnessId },
+    extras: { fiveRights: o.fiveRights, witnessedBy: o.witnessId, highAlert },
     fields: {
       administeredAt: o.administeredAt || _now(ctx),
-      administeredBy: ctx.actor && ctx.actor.id,
+      administeredBy: actorId,
       administeredByName: ctx.actor && (ctx.actor.fullName || ctx.actor.username),
       witnessId: o.witnessId || null,
       witnessName: o.witnessName || null,
+      witnessedAt: o.witnessId ? _now(ctx) : null,
       overrideReason: o.overrideReason || null,
       administeredDose: o.administeredDose || null,
-      rightsMode: o.rightsMode || (o.fiveRights ? 'verified' : 'attested'),
+      administeredRoute: o.administeredRoute || null,
+      barcodes: o.barcodes || null,
+      isHighAlert: highAlert,
+      fiveRights: o.fiveRights,
+      rightsMode: 'verified',
       notes: o.notes || null
     },
     event: 'kardex.mar.given',

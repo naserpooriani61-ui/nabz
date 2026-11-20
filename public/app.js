@@ -74,6 +74,8 @@ const NABZ = (() => {
       if (String(e.message).includes('unauthorized')) logout();
       else showErr(e.message);
     }
+    // Init nav system after boot
+    try { if (window.NABZ_NAV && typeof window.NABZ_NAV.init === 'function') window.NABZ_NAV.init(); } catch (_) {}
   }
 
   function showLogin() {
@@ -106,7 +108,7 @@ const MOD_META = {
     ops2:{l:'Operations',i:'🛡️'},
     bedboard:{l:'تخت',i:'🛏️'},
     home:{l:'خانه',i:'🏠'}, nursing_report:{l:'گزارش پرستاری',i:'📝'},
-    clinical:{l:'بالینی',i:'🩺'}, emergency:{l:'اورژانس',i:'🚨'},
+    clinical:{l:'بالینی',i:'🩺'},supervisor:{l:'سوپروایزر',i:'🏛️'}, emergency:{l:'اورژانس',i:'🚨'},
     workflow:{l:'گردش کار',i:'🔄'}, paraclinical:{l:'پاراکلینیک',i:'🧪'},
     safety:{l:'ایمنی',i:'⚠️'}, surgical:{l:'جراحی',i:'🔪'},
     ops:{l:'عملیات',i:'⚙️'}, education:{l:'آموزش',i:'🎓'},
@@ -125,7 +127,7 @@ const MOD_META = {
       if (!byModule[p.module]) byModule[p.module] = [];
       byModule[p.module].push(p);
     }
-    const modOrder = ['ops2','home','bedboard','nursing_report','nursing_report','clinical','encounters','cdss','emergency','workflow','paraclinical','safety','surgical','ops','education','education_studio','quality','rights','advanced_hr','admin','qr_pulse','crisis','shift_assistant'];
+    const modOrder = ['ops2','home','bedboard','nursing_report','nursing_report','clinical','encounters','cdss','emergency','workflow','paraclinical','safety','surgical','ops','education','education_studio','quality','rights','advanced_hr','admin','qr_pulse','crisis','supervisor','shift_assistant'];
 
     const tabs = [
       { icon:'🏠', label:'خانه', action:'(NABZ.showHome||NABZ.showNeural)()' },

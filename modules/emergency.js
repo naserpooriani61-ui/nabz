@@ -18,6 +18,59 @@ const CODE_DEFS = {
   '99':  { label: 'کد ۹۹ — CPR', steps: ['CPR','ROSC/Death'] }
 };
 
+// ── _buildPatientCtx: rich patient context from visit + patients store ──
+// Handles missing fields gracefully; falls back to patients collection by patientId or name.
+function _buildPatientCtx(ctx, v) {
+  const readAll = (c) => { try { const r = (ctx.store || require('../store')).readAll(c); return Array.isArray(r) ? r : []; } catch (_) { return []; } };
+  const allPatients = readAll('patients');
+  let p = null;
+  if (v && v.patientId) p = allPatients.find(x => x && x.id === v.patientId) || null;
+  if (!p && v && v.name) p = allPatients.find(x => x && x.name && String(x.name).trim() === String(v.name).trim()) || null;
+
+  const pick = (...vals) => { for (const val of vals) if (val != null && val !== '') return val; return null; };
+  const sexCode = pick(v && v.sex, p && p.sex);
+  const SEX = { M:'مرد', F:'زن', male:'مرد', female:'زن', '1':'مرد', '0':'زن', m:'مرد', f:'زن' };
+  const sexLabel = SEX[sexCode] || '—';
+
+  let age = pick(v && v.age, p && p.age);
+  if ((age == null) && p && p.dob) {
+    try { age = Math.floor((Date.now() - new Date(p.dob).getTime()) / (365.25 * 24 * 3600 * 1000)); } catch (_) {}
+  }
+
+  let allergies = pick(v && v.allergies, p && p.allergies);
+  if (typeof allergies === 'string') allergies = allergies.split(',').map(s => s.trim()).filter(Boolean);
+  if (!Array.isArray(allergies)) allergies = [];
+
+  const rawName = pick(v && v.name, v && v.patientName, v && v.fullName, p && p.name, null);
+
+  return {
+    name: rawName || '—',
+    mrn: pick(v && v.mrn, p && p.mrn, p && p.medicalRecordNumber, '—'),
+    age: age,
+    ageLabel: (age != null) ? (age + ' ساله') : '—',
+    sex: sexLabel,
+    sexCode: sexCode,
+    allergies: allergies,
+    hasAllergies: allergies.length > 0,
+    contact: pick(v && v.contact, v && v.phone, p && p.phone, p && p.contact, '—'),
+    bloodType: pick(v && v.bloodType, p && p.bloodType, '—'),
+    esiLevel: (v && v.esiLevel != null) ? v.esiLevel : null,
+    chiefComplaint: pick(v && v.chiefComplaint, v && v.complaint, '—'),
+    bedCode: pick(v && v.bedCode, v && v.bedId, v && v.bed, '—'),
+    zone: pick(v && v.zone, '—'),
+    arrivalAt: pick(v && v.arrivalAt, v && v.createdAt, null),
+    arrivalMode: pick(v && v.arrivalMode, '—'),
+    assignedDoctor: pick(v && v.assignedDoctor, v && v.doctorName, v && v.doctor, p && p.attending, '—'),
+    assignedNurse: pick(v && v.assignedNurse, v && v.nurseName, v && v.nurse, '—'),
+    status: pick(v && v.status, '—'),
+    isolation: pick(v && v.isolation, p && p.isolation, null),
+    codeStatus: pick(v && v.codeStatus, p && p.codeStatus, null),
+    visitId: v && v.id,
+    patientId: v && v.patientId,
+    hasPatientRecord: !!p
+  };
+}
+
 const handlers = {
   // ─── Visits ───
   visits: (ctx) => {
@@ -198,10 +251,140 @@ const handlers = {
     };
   },
   edNursingDashboard: (ctx) => {
-    const patientId = (ctx.query && ctx.query.patientId) || (ctx.params && ctx.params.patientId) || '';
-    const p = h(ctx, 'ed_visits').find(x => x.id == patientId || x.patientId == patientId);
-    const orders = h(ctx, 'orders').filter(o => o.patientId == patientId && o.status === 'pending');
-    return { patient: p, pendingOrders: orders };
+    const q = ctx.query || {};
+    const p0 = ctx.params || {};
+    const idRaw = q.visitId || q.patientId || p0.visitId || p0.patientId || '';
+    const id = String(idRaw || '').trim();
+    const allVisits = h(ctx, 'ed_visits') || [];
+
+    if (!id) return { visit: null, patient: null, patientContext: null, mar_due: [], mar_history: [], news2: null,
+                      error: 'no_id_provided', totalVisits: allVisits.length };
+
+    let v = null;
+    v = allVisits.find(x => x && x.id === id);
+    if (!v) v = allVisits.find(x => x && x.patientId === id);
+    if (!v) {
+      const lower = id.toLowerCase();
+      v = allVisits.find(x => x && String(x.id || '').toLowerCase() === lower);
+      v = v || allVisits.find(x => x && String(x.patientId || '').toLowerCase() === lower);
+    }
+
+    let matchedPatient = null;
+    if (!v && (id.startsWith('pat_') || id.startsWith('PAT'))) {
+      const allPatients = h(ctx, 'patients');
+      matchedPatient = allPatients.find(p => p.id === id) ||
+                       allPatients.find(p => String(p.id).toLowerCase() === id.toLowerCase());
+      if (matchedPatient && matchedPatient.name) {
+        const TERMINAL = ['closed','discharged','departed','transferred','left','lwbs','absconded'];
+        v = allVisits.find(x =>
+          x && x.name && matchedPatient.name &&
+          String(x.name).trim() === String(matchedPatient.name).trim() &&
+          !TERMINAL.includes(x.status)
+        );
+      }
+    }
+
+    if (!v) {
+      return {
+        visit: null, patient: null, patientContext: null, mar_due: [], mar_history: [], news2: null,
+        error: matchedPatient ? 'no_active_visit_for_patient' : 'visit_not_found',
+        searchedId: id, totalVisits: allVisits.length,
+        patientFound: matchedPatient ? { id: matchedPatient.id, name: matchedPatient.name } : null,
+        sampleIds: allVisits.slice(0, 12).map(x => ({
+          id: x.id, name: x.name || '—', patientId: x.patientId || null, status: x.status
+        }))
+      };
+    }
+
+    if (matchedPatient && !v.patientId) {
+      try {
+        v.patientId = matchedPatient.id;
+        v.linkedAt = new Date().toISOString();
+        require('../store').put('ed_visits', v);
+      } catch (_) {}
+    }
+
+    // Enrich with patientContext
+    const pCtx = _buildPatientCtx(ctx, v);
+    if (!v.name && pCtx.name && pCtx.name !== '—') v.name = pCtx.name;
+
+    const actualPid = v.patientId || v.id;
+    const allMar = h(ctx, 'mar').filter(m => m.patientId == actualPid || m.visitId == v.id || m.patientId == v.id);
+    const now = Date.now(), winMs = 30 * 60 * 1000;
+
+    const mar_due = allMar
+      .filter(m => m.status === 'pending' || m.status === 'scheduled')
+      .map(m => {
+        const sch = m.scheduledAt ? new Date(m.scheduledAt).getTime() : null;
+        return Object.assign({}, m, {
+          overdue_min: sch == null ? null : Math.max(0, Math.floor((now - sch) / 60000)),
+          isOverdue: sch != null && now > sch
+        });
+      })
+      .filter(m => { const s = m.scheduledAt ? new Date(m.scheduledAt).getTime() : null; return s == null || s - now <= winMs; })
+      .sort((a, b) => { const sa = a.scheduledAt ? new Date(a.scheduledAt).getTime() : Infinity; const sb = b.scheduledAt ? new Date(b.scheduledAt).getTime() : Infinity; return sa - sb; });
+
+    const mar_history = allMar
+      .filter(m => ['given','refused','held','missed','given_partial','cancelled'].includes(m.status))
+      .sort((a, b) => {
+        const ta = new Date(b.administeredAt || b.heldAt || b.refusedAt || b.missedAt || 0).getTime();
+        const tb = new Date(a.administeredAt || a.heldAt || a.refusedAt || a.missedAt || 0).getTime();
+        return ta - tb;
+      })
+      .slice(0, 20);
+
+    let news2 = null;
+    try {
+      const W = require('../core/domain/ed-visit-writer');
+      const lv = W.latestVitals(ctx, v, h(ctx, 'vitals'));
+      if (lv && lv.vitals) news2 = require('../core/domain/news2').calc(lv.vitals);
+    } catch (_) {}
+
+    return { visit: v, patient: v, patientContext: pCtx, actualPatientId: actualPid, mar_due, mar_history, news2, pendingOrders: [] };
+  },
+  edMarEvents: (ctx) => {
+    const marId = ctx.params.id;
+    const mar = h(ctx, 'mar').find(m => m.id === marId);
+    if (!mar) throw { code: 404, message: 'mar_not_found' };
+    return { mar, events: (mar._trans || []).slice().reverse() };
+  },
+  edSaveVitals: (ctx) => {
+    const b = ctx.body || {};
+    const id = b.visitId || b.patientId || '';
+    const v = h(ctx, 'ed_visits').find(x => x.id == id || x.patientId == id);
+    const pid = v ? (v.patientId || v.id) : id;
+    if (!pid) throw { code: 400, message: 'patient_required' };
+    try {
+      const vw = require('../core/domain/vitals-writer');
+      const fn = vw.record || vw.write || vw.create || vw.recordVitals;
+      if (typeof fn === 'function') {
+        return fn(ctx, { patientId: pid, hr: b.hr, bp_sys: b.bp_sys, bp_dia: b.bp_dia, rr: b.rr, spo2: b.spo2, temp: b.temp, gcs: b.gcs, pain: b.pain, onOxygen: !!b.onOxygen, consciousness: b.consciousness });
+      }
+      return { ok: true, stored: false, reason: 'no_writer_method' };
+    } catch (e) {
+      return { ok: true, stored: false, error: String(e && e.message || e) };
+    }
+  },
+  edMarAction: (ctx) => {
+    const marId = ctx.params.id;
+    const b = ctx.body || {};
+    const action = String(b.action || b.status || '').toLowerCase();
+    const MW = require('../core/domain/mar-writer');
+    if (['given','administer','administered'].includes(action)) {
+      if (!b.fiveRights) throw { code: 400, message: 'five_rights_required' };
+      return MW.administer(ctx, marId, { fiveRights: b.fiveRights, witnessId: b.witnessId, witnessName: b.witnessName, administeredDose: b.administeredDose, administeredRoute: b.administeredRoute, barcodes: b.barcodes, notes: b.notes });
+    }
+    if (['held','hold'].includes(action)) {
+      if (!b.reason || b.reason.length < 5) throw { code: 400, message: 'hold_reason_min_5_chars' };
+      return MW.hold(ctx, marId, { reason: b.reason });
+    }
+    if (['refused','refuse'].includes(action)) {
+      if (!b.reason || b.reason.length < 5) throw { code: 400, message: 'refuse_reason_min_5_chars' };
+      return MW.refuse(ctx, marId, { reason: b.reason });
+    }
+    if (['missed','miss'].includes(action)) return MW.miss(ctx, marId, { reason: b.reason });
+    if (action === 'partial') return MW.partial(ctx, marId, { givenDose: b.givenDose, reason: b.reason, fiveRights: b.fiveRights });
+    throw { code: 400, message: 'unknown_mar_action:' + action };
   }
 };
 
@@ -220,6 +403,9 @@ module.exports = {
     { method: 'POST', path: '/api/emergency/codes/:id/step', handler: 'codeStep',  perm: 'ed.code.activate' },
     { method: 'POST', path: '/api/emergency/codes/:id/close', handler: 'codeClose', perm: 'ed.code.activate' },
     { method: 'GET',  path: '/api/ed/nursing_dashboard', handler: 'edNursingDashboard', perm: 'ed.view' },
+    { method: 'POST', path: '/api/ed/vitals',   handler: 'edSaveVitals',  perm: 'ed.view' },
+    { method: 'POST', path: '/api/ed/mar/:id',  handler: 'edMarAction',   perm: 'ed.view' },
+    { method: 'GET',  path: '/api/ed/mar/:id/events', handler: 'edMarEvents', perm: 'ed.view' },
   
   ],
   panels: [

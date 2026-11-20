@@ -1,0 +1,41 @@
+[33mcommit 5cc05742f6db8917468c14e12497599a3cfc7924[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m)[m
+Author: naserpooriani61-ui <naserpooriani61@gmail.com>
+Date:   Thu Nov 19 23:38:31 2026 +0330
+
+    fix(ed): unblock ER Command Center, triage, and nursing worklists
+    
+    Root causes fixed:
+    - ed_cc_ui: auth check used window.NABZ (always falsy due to const NABZ
+      in app.js) → fallback fetch without Bearer → 401 on every call
+    - app.js: never exposed NABZ on window → all inline onclick="NABZ.xxx"
+      handlers failed → patient pickers in triage/nursing never fired
+    - emergency.js: edNursingDashboard handler + route were missing (only
+      existed in .bak-superhuman-fix) → nursing dashboard 404
+    - emergency.js: ed-ops.extend was never called → 12 routes from 28B
+      (beds, assign-bed, release-bed, create-patient, cosign, timeline,
+      action, retriage, link-patient, esi/suggest) all returned 404
+    - ed_nursing_ui + ed_triage_ui: show() overwrote state.patientId with
+      URL param (null) after picker set it → 'entering' a patient silently
+      bounced back to worklist
+    - render(): no null guard on state.data.patient → crash
+      "can't access property 'name', p is undefined"
+    
+    Verification:
+    - test-all: 42/42
+    - health: ALL DOMAINS UNIFIED
+    - 26 emergency routes registered (was 11)
+    - browser click-through: nursing + triage pickers open patient file
+    - sw cache: v39 → v42
+
+ core/domain/ed-ops.js     | 207 [32m+++++++++++++[m
+ modules/emergency.js      |  83 [32m+++++[m[31m-[m
+ modules/emergency_full.js |   2 [32m+[m[31m-[m
+ public/app.js             |   3 [32m+[m
+ public/ed_cc_ui.js        | 498 [32m++++++++++++++++++++++++++++++++[m
+ public/ed_nursing_ui.js   | 224 [32m++++++++++++++[m
+ public/ed_triage_ui.js    | 255 [32m++++++++++++++++[m
+ public/index.html         |   4 [32m+[m
+ public/sw.js              |   2 [32m+[m[31m-[m
+ public/zz_ed_master.js    |  10 [32m+[m[31m-[m
+ tools/test-ed-ops.js      |  78 [32m+++++[m
+ 11 files changed, 1356 insertions(+), 10 deletions(-)

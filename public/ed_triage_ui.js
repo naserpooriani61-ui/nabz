@@ -44,6 +44,31 @@
 
   const state = { patientId: null, formData: {} };
 
+  function _esiColorTri(l) { return { 1: '#dc2626', 2: '#ea580c', 3: '#ca8a04', 4: '#16a34a', 5: '#0284c7' }[l] || '#64748b'; }
+  function _renderPatientBannerTriage(ctx) {
+    if (!ctx) return '';
+    const esi = ctx.esiLevel;
+    const esiCol = _esiColorTri(esi);
+    const safe = (s) => String(s == null ? '—' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const arrival = ctx.arrivalAt ? (() => { try { return new Date(ctx.arrivalAt).toLocaleString('fa-IR', { hour: '2-digit', minute: '2-digit', month: '2-digit', day: '2-digit' }); } catch(_) { return '—'; } })() : '—';
+    let h = '<div style="background:linear-gradient(135deg,#7f1d1d 0%,#0f172a 100%);color:#fff;padding:14px;border-radius:14px;margin-bottom:12px;direction:rtl;box-shadow:0 4px 14px rgba(0,0,0,.15)">';
+    h += '<div style="display:flex;justify-content:space-between;gap:10px">';
+    h += '<div style="flex:1;min-width:0">';
+    h += '<div style="font-size:18px;font-weight:900">' + safe(ctx.name) + '</div>';
+    h += '<div style="font-size:12px;opacity:.85;margin-top:4px">' + safe(ctx.sex) + ' · ' + safe(ctx.ageLabel) + (ctx.mrn && ctx.mrn !== '—' ? ' · MRN: ' + safe(ctx.mrn) : '') + '</div>';
+    h += '<div style="font-size:12px;opacity:.85;margin-top:2px">📋 ' + safe(ctx.chiefComplaint) + '</div>';
+    h += '<div style="font-size:11px;opacity:.75;margin-top:4px">🕒 ' + safe(arrival) + '</div>';
+    h += '</div>';
+    h += '<div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">';
+    if (esi != null) h += '<div style="background:' + esiCol + ';color:#fff;padding:8px 14px;border-radius:12px;font-weight:900;font-size:18px">ESI ' + esi + '</div>';
+    else h += '<div style="background:#ea580c;color:#fff;padding:6px 12px;border-radius:10px;font-weight:800;font-size:12px">در انتظار تریاژ</div>';
+    h += '<div style="font-size:11px;opacity:.85">🛏 ' + safe(ctx.bedCode) + '</div>';
+    h += '</div></div>';
+    if (ctx.hasAllergies) h += '<div style="background:#dc2626;padding:6px 10px;border-radius:8px;margin-top:8px;font-weight:800;font-size:12px">⚠️ حساسیت: ' + ctx.allergies.map(safe).join('، ') + '</div>';
+    h += '</div>';
+    return h;
+  }
+
   async function show() {
     const urlParams = new URLSearchParams(window.location.search);
     const urlPid = urlParams.get('patientId');
@@ -146,41 +171,63 @@
     btn.disabled = true;
     btn.innerText = '⏳ در حال ثبت...';
 
+    const visitId = state.patientId;
+    if (!visitId) {
+      alert('ویزیت انتخاب نشده');
+      btn.disabled = false; btn.innerText = '✅ ثبت تریاژ';
+      return;
+    }
+
+    const v = state.visit || null;
+    const actualPid = v && v.patientId ? v.patientId : null;
+
+    const vitalsPayload = {
+      hr: document.getElementById('t_hr').value || null,
+      bp_sys: document.getElementById('t_sbp').value || null,
+      bp_dia: document.getElementById('t_dbp').value || null,
+      rr: document.getElementById('t_rr').value || null,
+      spo2: document.getElementById('t_spo2').value || null,
+      temp: document.getElementById('t_temp').value || null,
+      gcs: document.getElementById('t_gcs').value || null,
+      pain: document.getElementById('t_pain').value || null,
+      onOxygen: false,
+      consciousness: document.getElementById('t_conscious') ? document.getElementById('t_conscious').value : null
+    };
+
     try {
-      // ۱. ثبت علائم حیاتی با Writer رسمی (قانون صفر تلورانس: هیچ store.put خامی مجاز نیست)
-      await apiCall('/api/clinical/vitals', { 
-        method: 'POST', 
+      // 1) Best-effort vitals — never blocks triage submission
+      if (actualPid) {
+        try {
+          await apiCall('/api/ed/vitals', { method: 'POST', body: JSON.stringify(Object.assign({ patientId: actualPid, visitId }, vitalsPayload)) });
+        } catch (ve) {
+          try { await apiCall('/api/clinical/vitals', { method: 'POST', body: JSON.stringify(Object.assign({ patientId: actualPid }, vitalsPayload)) }); }
+          catch (ve2) { console.warn('[triage] vitals skipped:', ve2.message); }
+        }
+      }
+
+      // 2) Triage submit — required
+      await apiCall('/api/emergency/visits/' + encodeURIComponent(visitId) + '/triage', {
+        method: 'POST',
         body: JSON.stringify({
-          patientId: state.patientId,
-          hr: document.getElementById('t_hr').value || null,
-          bp_sys: document.getElementById('t_sbp').value || null, // نگاشت به فیلد کانونیکال نَبض
-          bp_dia: document.getElementById('t_dbp').value || null,
-          rr: document.getElementById('t_rr').value || null,
-          spo2: document.getElementById('t_spo2').value || null,
-          temp: document.getElementById('t_temp').value || null,
-          gcs: document.getElementById('t_gcs').value || null,
-          pain: document.getElementById('t_pain').value || null,
-          onOxygen: false,
-          consciousness: document.getElementById('t_conscious').value
-        }) 
+          esiLevel: (state.formData && state.formData.suggestedEsi) || 3,
+          chiefComplaint: document.getElementById('t_cc').value,
+          arrivalMode: document.getElementById('t_mode').value,
+          vitals: vitalsPayload
+        })
       });
 
-      // ۲. ثبت تریاژ و تغییر وضعیت بیمار از طریق State Machine موجود
-      await apiCall(`/api/emergency/visits/${state.patientId}/triage`, { 
-        method: 'POST', 
-        body: JSON.stringify({ 
-          esiLevel: state.formData.suggestedEsi || 3,
-          chiefComplaint: document.getElementById('t_cc').value,
-          arrivalMode: document.getElementById('t_mode').value
-        }) 
-      });
-      
-      if (typeof NABZ._toast === 'function') NABZ._toast('✅ تریاژ با موفقیت ثبت شد');
-      
-      // Redirect to nursing workspace or patient list
-      window.location.href = `/kind/ed_nursing?zone=suggested&patientId=${state.patientId}`;
-    } catch(e) { console.error("[ED UI Error]", e); 
-      alert('خطا در ثبت تریاژ: ' + e.message);
+      if (typeof NABZ._toast === 'function') NABZ._toast('✅ تریاژ ثبت شد');
+      else alert('✅ تریاژ ثبت شد');
+
+      // 3) Return to worklist cleanly
+      state.patientId = null;
+      state.visit = null;
+      state.formData = {};
+      if (typeof NABZ.show === 'function') { window.NABZ_NAV ? window.NABZ_NAV.go("ed/triage") : NABZ.show("ed_triage"); }
+      else if (typeof renderWorklist === 'function') { renderWorklist(); }
+    } catch (e) {
+      console.error('[ED Triage Error]', e);
+      alert('خطا در ثبت تریاژ: ' + (e.message || e));
       btn.disabled = false;
       btn.innerText = '✅ ثبت تریاژ و تخصیص زون';
     }
@@ -248,7 +295,16 @@
       document.getElementById('content').innerHTML = h;
     } catch(e) { console.error("[ED UI Error]", e);  document.getElementById('content').innerHTML = '<div style="color:#dc2626;padding:20px">خطا: ' + e.message + '</div>'; }
   }
-  window.NABZ._edTriagePick = function(pid){ state.patientId = pid; show(); };
+  window.NABZ._edTriagePick = async function(pid) {
+    state.patientId = pid;
+    try {
+      const r = await apiCall('/api/emergency/visits');
+      const v = (r && ((r.data && r.data.rows) || r.rows || r.visits || r)) || [];
+      const arr = Array.isArray(v) ? v : (v.visits || []);
+      state.visit = arr.find(x => x.id == pid) || null;
+    } catch (_) { state.visit = null; }
+    show();
+  };;
   if (typeof NABZ !== 'undefined' && typeof NABZ.registerKind === 'function') {
     NABZ.registerKind('ed_triage', show);
   }

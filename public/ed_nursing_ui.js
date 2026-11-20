@@ -41,52 +41,150 @@
 
   async function show() {
     const urlParams = new URLSearchParams(window.location.search);
+    const urlVid = urlParams.get('visitId');
     const urlPid = urlParams.get('patientId');
-    if (urlPid && urlPid !== 'undefined' && urlPid !== 'null') state.patientId = urlPid;
+    if (urlVid && urlVid !== 'undefined' && urlVid !== 'null') state.patientId = urlVid;
+    else if (urlPid && urlPid !== 'undefined' && urlPid !== 'null') state.patientId = urlPid;
+
     if (!state.patientId) { renderWorklist(); return; }
     document.getElementById('content').innerHTML = '<div style="text-align:center;padding:40px">در حال بارگذاری...</div>';
 
     try {
-      const res = await apiCall(`/api/ed/nursing_dashboard?patientId=${state.patientId}`);
-      state.data = res;
+      const res = await apiCall('/api/ed/nursing_dashboard?visitId=' + encodeURIComponent(state.patientId));
+      let data = res;
+      if (data && typeof data === 'object' && !data.visit && !data.patient) {
+        if (data.data && (data.data.visit || data.data.patient)) data = data.data;
+        else if (data.payload && (data.payload.visit || data.payload.patient)) data = data.payload;
+      }
+      if (!data || typeof data !== 'object') data = {};
+
+      state.data = data;
+      const visit = data.visit || data.patient;
+
+      if (!visit) {
+        console.error('[NABZ] nursing_dashboard — visit not found. Raw response:', res);
+        const errCode = data.error || 'unknown';
+        const searched = data.searchedId || state.patientId;
+        const total = data.totalVisits != null ? data.totalVisits : '?';
+        const samples = Array.isArray(data.sampleIds) ? data.sampleIds : [];
+        const patientFound = data.patientFound;
+
+        let errBody = '<div style="padding:24px;text-align:center;direction:rtl">';
+        errBody += '<div style="color:#dc2626;font-size:16px;font-weight:800;margin-bottom:8px">❌ پرونده باز نشد</div>';
+        errBody += '<div style="color:#64748b;font-size:12px;margin-bottom:2px">شناسه ارسالی: <b>' + searched + '</b></div>';
+        errBody += '<div style="color:#64748b;font-size:12px;margin-bottom:2px">کد: ' + errCode + '</div>';
+        if (patientFound) errBody += '<div style="color:#0891b2;font-size:12px;margin-bottom:2px">بیمار یافت شد: ' + patientFound.name + '</div>';
+        errBody += '<div style="color:#64748b;font-size:12px;margin-bottom:16px">ویزیت‌های موجود: ' + total + '</div>';
+
+        if (samples.length > 0) {
+          errBody += '<div style="background:#f8fafc;border-radius:12px;padding:12px;margin:0 auto 16px;max-width:520px;text-align:right">';
+          errBody += '<div style="font-weight:800;font-size:13px;margin-bottom:8px">یکی از ویزیت‌های فعال را انتخاب کن:</div>';
+          samples.forEach(s => {
+            if (['closed','discharged','departed','transferred'].includes(s.status)) return;
+            errBody += '<button onclick="NABZ._edNursingPick(\'' + s.id + '\')" style="display:block;width:100%;text-align:right;padding:10px;margin-bottom:6px;background:#fff;border:1px solid #e2e8f0;border-radius:10px;font-size:13px;cursor:pointer">';
+            errBody += '<b>' + (s.name || '—') + '</b> <span style="color:#64748b;font-size:11px">(' + s.status + ')</span>';
+            errBody += '<div style="color:#94a3b8;font-size:10px;margin-top:2px">' + s.id + '</div>';
+            errBody += '</button>';
+          });
+          errBody += '</div>';
+        }
+
+        errBody += '<button onclick="NABZ.show(\'ed_nursing\')" style="padding:10px 20px;background:#0f172a;color:#fff;border:none;border-radius:10px;font-weight:700;cursor:pointer">بازگشت به صف</button>';
+        errBody += '</div>';
+        document.getElementById('content').innerHTML = errBody;
+        return;
+      }
+
       render();
-    } catch(e) { console.error("[ED UI Error]", e); 
-      document.getElementById('content').innerHTML = `<div style="color:red;padding:20px">خطا: ${e.message}</div>`;
+    } catch(e) {
+      console.error("[ED UI Error]", e);
+      document.getElementById('content').innerHTML = '<div style="color:red;padding:20px">خطا: ' + e.message + '</div>';
     }
   }
 
+  function _esiColor(l) {
+    return { 1: '#dc2626', 2: '#ea580c', 3: '#ca8a04', 4: '#16a34a', 5: '#0284c7' }[l] || '#64748b';
+  }
+  function _renderPatientBanner(ctx) {
+    if (!ctx) return '';
+    const esi = ctx.esiLevel;
+    const esiCol = _esiColor(esi);
+    const safe = (s) => String(s == null ? '—' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const arrival = ctx.arrivalAt ? (() => { try { return new Date(ctx.arrivalAt).toLocaleString('fa-IR', { hour: '2-digit', minute: '2-digit', month: '2-digit', day: '2-digit' }); } catch(_) { return '—'; } })() : '—';
+    let h = '<div style="background:linear-gradient(135deg,#0f172a 0%,#334155 100%);color:#fff;padding:16px;border-radius:16px;margin-bottom:14px;direction:rtl;box-shadow:0 4px 14px rgba(0,0,0,.15)">';
+    h += '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px">';
+    h += '<div style="flex:1;min-width:0">';
+    h += '<div style="font-size:20px;font-weight:900;line-height:1.2">' + safe(ctx.name) + '</div>';
+    h += '<div style="font-size:12px;opacity:.85;margin-top:6px">';
+    h += '<span>' + safe(ctx.sex) + '</span> · <span>' + safe(ctx.ageLabel) + '</span>';
+    if (ctx.mrn && ctx.mrn !== '—') h += ' · <span>MRN: ' + safe(ctx.mrn) + '</span>';
+    if (ctx.bloodType && ctx.bloodType !== '—') h += ' · <span>گروه خون: ' + safe(ctx.bloodType) + '</span>';
+    h += '</div>';
+    h += '<div style="font-size:12px;opacity:.85;margin-top:4px">📋 شکایت: ' + safe(ctx.chiefComplaint) + '</div>';
+    h += '<div style="font-size:12px;opacity:.75;margin-top:4px">🕒 ورود: ' + safe(arrival) + (ctx.arrivalMode && ctx.arrivalMode !== '—' ? ' · ' + safe(ctx.arrivalMode) : '') + '</div>';
+    h += '</div>';
+    h += '<div style="text-align:left;display:flex;flex-direction:column;gap:6px;align-items:flex-end">';
+    if (esi != null) h += '<div style="background:' + esiCol + ';color:#fff;padding:10px 16px;border-radius:14px;font-weight:900;font-size:22px;line-height:1;min-width:56px;text-align:center">ESI<br><span style="font-size:22px">' + esi + '</span></div>';
+    h += '<div style="font-size:11px;opacity:.85;background:rgba(255,255,255,.12);padding:4px 10px;border-radius:8px">🛏 ' + safe(ctx.bedCode) + '</div>';
+    h += '<div style="font-size:11px;opacity:.75">📍 ' + safe(ctx.zone) + '</div>';
+    h += '</div>';
+    h += '</div>';
+    if (ctx.hasAllergies) {
+      h += '<div style="background:#dc2626;padding:8px 12px;border-radius:10px;margin-top:10px;font-weight:800;font-size:13px">⚠️ حساسیت دارویی: ' + ctx.allergies.map(safe).join('، ') + '</div>';
+    }
+    if (ctx.isolation) h += '<div style="background:#7c3aed;padding:6px 12px;border-radius:10px;margin-top:6px;font-weight:800;font-size:12px">🧪 ایزوله: ' + safe(ctx.isolation) + '</div>';
+    h += '<div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:10px;font-size:11px;opacity:.8;border-top:1px solid rgba(255,255,255,.15);padding-top:10px">';
+    h += '<span>👨‍⚕️ پزشک: ' + safe(ctx.assignedDoctor) + '</span>';
+    h += '<span>👩‍⚕️ پرستار: ' + safe(ctx.assignedNurse) + '</span>';
+    if (ctx.contact && ctx.contact !== '—') h += '<span>📞 ' + safe(ctx.contact) + '</span>';
+    h += '<span>🏥 ' + safe(ctx.status) + '</span>';
+    h += '</div>';
+    h += '</div>';
+    return h;
+  }
+
   function render() {
-    const p = state.data && state.data.patient;
-    if (!p) { document.getElementById('content').innerHTML = '<div style="padding:24px;color:#dc2626;text-align:center;font-weight:700">❌ پرونده یافت نشد</div>'; return; }
-    const orders = state.data.pendingOrders || [];
+    const d = state.data || {};
+    const p = d.visit || d.patient || {};
+    const orders = d.pendingOrders || [];
+    const news2 = d.news2 || null;
     
     let h = `<div class="nursing-wrap">`;
+    h += _renderPatientBanner(d.patientContext);
     h += `<div class="nursing-header">`;
-    h += `<div><div style="font-size:18px;font-weight:900">${p.name}</div>`;
-    h += `<div style="font-size:12px;color:var(--kx-text-2)">ESI: ${p.esiLevel} | تخت: ${p.bedCode || 'نامشخص'} | ${p.chiefComplaint}</div></div>`;
-    h += `<button class="mar-btn hold" onclick="window.history.back()">بازگشت</button>`;
+    h += `<div><div style="font-size:18px;font-weight:900">${p.name || p.patientName || p.fullName || "—"}</div>`;
+    h += `<div style="font-size:12px;color:var(--kx-text-2)">ESI: ${p.esiLevel != null ? p.esiLevel : "—"} | تخت: ${p.bedCode || p.bedId || "—"} | ${p.chiefComplaint || "—"}</div></div>`;
+    h += `<button class="mar-btn hold" onclick="(window.NABZ_NAV ? window.NABZ_NAV.back() : (window.NABZ && window.NABZ.show ? window.NABZ.show("ed_cc") : null))">بازگشت</button>`;
     h += `</div>`;
 
     h += `<div class="nursing-grid">`;
     
-    // Left: MAR & Actions
+    // Left: MAR due & history
     h += `<div class="n-card">`;
-    h += `<div class="n-title">💊 دستورات در انتظار اجرا (MAR)</div>`;
-    if (orders.length === 0) {
+    h += `<div class="n-title">💊 دستورات دارویی (${(d.mar_due||[]).length} در انتظار)</div>`;
+    if (!d.mar_due || d.mar_due.length === 0) {
       h += `<div style="text-align:center;color:var(--kx-text-2);padding:20px">دستور جدیدی در انتظار نیست</div>`;
     } else {
-      orders.forEach(o => {
-        const isHighAlert = o.item.includes('مورفین') || o.item.includes('انسولین') || o.item.includes('هپارین');
-        h += `<div class="mar-item" style="${isHighAlert ? 'border-color:#dc2626; background:#fef2f2;' : ''}">`;
-        h += `<div><div style="font-weight:700">${o.item} ${o.dose || ''}</div>`;
-        h += `<div style="font-size:11px;color:var(--kx-text-2)">${o.route || ''} - ${o.frequency || ''} ${isHighAlert ? '⚠️ نیاز به شاهد' : ''}</div></div>`;
-        h += `<div>`;
-        h += `<button class="mar-btn give" onclick="NABZ._edMarAction('${o.id}', 'given')">✅ اجرا</button>`;
-        h += `<button class="mar-btn hold" onclick="NABZ._edMarAction('${o.id}', 'held')">❌ عدم اجرا</button>`;
-        h += `</div></div>`;
+      d.mar_due.forEach(m => {
+        const bg = m.isHighAlert ? 'border-color:#dc2626;background:#fef2f2' : (m.isOverdue ? 'border-color:#f59e0b;background:#fffbeb' : '');
+        const badge = m.isHighAlert ? '<span style="background:#dc2626;color:#fff;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:800;margin-left:6px">⚠️ پرخطر</span>' : '';
+        const overdue = m.isOverdue ? `<span style="color:#dc2626;font-size:10px;font-weight:800">${m.overdue_min}د تأخیر</span>` : '';
+        const sch = m.scheduledAt ? new Date(m.scheduledAt).toLocaleTimeString('fa-IR',{hour:'2-digit',minute:'2-digit'}) : '—';
+        h += `<div class="mar-item" style="${bg}"><div style="flex:1"><div style="font-weight:800">${m.drugName||m.item||'—'} ${m.dose||''} ${badge}</div><div style="font-size:11px;color:var(--kx-text-2)">${m.route||''} · ${sch} · ${overdue}</div></div><div style="display:flex;gap:4px"><button class="mar-btn give" onclick="NABZ._edMarOpen('${m.id}')">✅ اجرا</button><button class="mar-btn hold" onclick="NABZ._edMarQuickHold('${m.id}')">❌</button></div></div>`;
       });
     }
     h += `</div>`;
+
+    if (d.mar_history && d.mar_history.length > 0) {
+      h += `<div class="n-card"><div class="n-title">📜 تاریخچه اخیر (${d.mar_history.length})</div>`;
+      d.mar_history.slice(0, 8).forEach(m => {
+        const st = m.status === 'given' ? '✅' : m.status === 'refused' ? '🚫' : m.status === 'held' ? '⏸' : '⏰';
+        const t = m.administeredAt || m.heldAt || m.refusedAt || m.missedAt;
+        const w = t ? new Date(t).toLocaleTimeString('fa-IR',{hour:'2-digit',minute:'2-digit'}) : '—';
+        h += `<div style="padding:8px;border-bottom:1px solid #f1f5f9;font-size:12px;display:flex;justify-content:space-between"><span>${st} ${m.drugName||'—'} ${m.dose||''}</span><span style="color:#64748b">${w} · ${m.administeredByName||m.heldBy||m.refusedBy||'—'}</span></div>`;
+      });
+      h += `</div>`;
+    }
 
     // Right: Quick Vitals
     h += `<div class="n-card">`;
@@ -105,23 +203,75 @@
   }
 
   window.NABZ = window.NABZ || {};
-  window.NABZ._edMarAction = async function(orderId, action) {
-    if (action === 'given') {
-      // In a real superhuman system, high-alert meds would prompt for a second nurse's PIN here
-      const confirmed = confirm('آیا از اجرای این دستور اطمینان دارید؟');
-      if (!confirmed) return;
-    }
-    try {
-      await apiCall(`/api/ed/mar/${orderId}`, { 
-        method: 'POST', 
-        body: JSON.stringify({ action, nurseId: 'current_user' }) // Replace with actual auth ID
-      });
-      if (typeof NABZ._toast === 'function') NABZ._toast(`دستور با موفقیت ${action === 'given' ? 'اجرا' : 'متوقف'} شد`);
-      show(); // Refresh
-    } catch(e) { console.error("[ED UI Error]", e); 
-      alert('خطا: ' + e.message);
-    }
+  window.NABZ._edMarOpen = function(marId) {
+    const m = (state.data && state.data.mar_due || []).find(x => x.id === marId);
+    if (!m) { alert('MAR یافت نشد'); return; }
+    const ha = !!m.isHighAlert;
+    const labels = {patient:'بیمار',drug:'دارو',dose:'دوز',route:'مسیر',time:'زمان'};
+    const html = `
+      <div id="mar_sheet_bg" style="position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:9999;display:flex;align-items:flex-end;justify-content:center">
+        <div style="background:#fff;width:100%;max-width:520px;border-radius:20px 20px 0 0;padding:18px;direction:rtl;max-height:90vh;overflow-y:auto">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+            <div style="font-weight:900;font-size:16px">تأیید اجرای دارو</div>
+            <button onclick="document.getElementById('mar_sheet_bg').remove()" style="background:#f1f5f9;border:none;border-radius:8px;padding:6px 10px;font-size:14px;cursor:pointer">✕</button>
+          </div>
+          <div style="background:${ha?'#fef2f2':'#f8fafc'};border:2px solid ${ha?'#dc2626':'#e2e8f0'};border-radius:12px;padding:12px;margin-bottom:12px">
+            <div style="font-weight:800;font-size:14px">${m.drugName||m.item} ${m.dose||''}</div>
+            <div style="font-size:12px;color:#64748b">${m.route||''} · ${m.frequency||''}</div>
+            ${ha?'<div style="margin-top:6px;color:#dc2626;font-weight:800;font-size:12px">⚠️ داروی پرخطر — تأیید پرستار دوم الزامی</div>':''}
+          </div>
+          <div style="font-weight:800;font-size:13px;margin-bottom:8px">✅ تأیید حقوق پنج‌گانه</div>
+          <div id="mar_rights" style="margin-bottom:12px">
+            ${['patient','drug','dose','route','time'].map(k=>`<label style="display:flex;align-items:center;gap:8px;padding:10px;background:#f8fafc;border-radius:8px;margin-bottom:6px;cursor:pointer"><input type="checkbox" data-right="${k}" style="width:18px;height:18px"><span style="font-weight:700">${labels[k]}</span></label>`).join('')}
+          </div>
+          ${ha?`<div style="margin-bottom:12px"><label style="display:block;font-size:13px;font-weight:800;margin-bottom:6px">پرستار دوم (شاهد)</label><input id="mar_witness" type="text" placeholder="نام کاربری پرستار دوم" style="width:100%;padding:10px;border:1.5px solid #e2e8f0;border-radius:10px;font-size:14px"></div>`:''}
+          <div style="margin-bottom:12px;display:flex;gap:8px">
+            <div style="flex:1"><label style="display:block;font-size:12px;font-weight:700;margin-bottom:4px">دوز واقعی</label><input id="mar_dose" type="text" value="${m.dose||''}" style="width:100%;padding:10px;border:1.5px solid #e2e8f0;border-radius:10px;font-size:14px"></div>
+            <div style="flex:1"><label style="display:block;font-size:12px;font-weight:700;margin-bottom:4px">مسیر واقعی</label><input id="mar_route" type="text" value="${m.route||''}" style="width:100%;padding:10px;border:1.5px solid #e2e8f0;border-radius:10px;font-size:14px"></div>
+          </div>
+          <div style="margin-bottom:12px">
+            <label style="display:flex;align-items:center;gap:8px;font-size:12px;font-weight:700;margin-bottom:4px"><input type="checkbox" id="mar_bc1" style="width:16px;height:16px">بارکد بازوی بیمار اسکن شد</label>
+            <label style="display:flex;align-items:center;gap:8px;font-size:12px;font-weight:700"><input type="checkbox" id="mar_bc2" style="width:16px;height:16px">بارکد بسته دارو اسکن شد</label>
+          </div>
+          <button id="mar_submit" style="width:100%;padding:14px;border:none;border-radius:12px;background:#059669;color:#fff;font-weight:900;font-size:15px;cursor:pointer" onclick="NABZ._edMarSubmit('${marId}')">ثبت اجرا</button>
+        </div>
+      </div>`;
+    const wrap = document.createElement('div');
+    wrap.innerHTML = html;
+    document.body.appendChild(wrap.firstChild);
   };
+
+  window.NABZ._edMarSubmit = async function(marId) {
+    const rights = {};
+    document.querySelectorAll('#mar_rights input[data-right]').forEach(el => { rights[el.getAttribute('data-right')] = el.checked; });
+    if (!Object.values(rights).every(Boolean)) { alert('همه پنج حق باید تأیید شود'); return; }
+    const wEl = document.getElementById('mar_witness');
+    const payload = {
+      action: 'given',
+      fiveRights: rights,
+      administeredDose: (document.getElementById('mar_dose')||{}).value || null,
+      administeredRoute: (document.getElementById('mar_route')||{}).value || null,
+      barcodes: { patient: !!(document.getElementById('mar_bc1')||{}).checked, drug: !!(document.getElementById('mar_bc2')||{}).checked },
+      witnessId: wEl ? wEl.value.trim() : null
+    };
+    const btn = document.getElementById('mar_submit');
+    btn.disabled = true; btn.innerText = '⏳...';
+    try {
+      await apiCall('/api/ed/mar/' + encodeURIComponent(marId), { method: 'POST', body: JSON.stringify(payload) });
+      const bg = document.getElementById('mar_sheet_bg'); if (bg) bg.remove();
+      if (typeof NABZ._toast === 'function') NABZ._toast('✅ ثبت شد');
+      show();
+    } catch(e) { alert('خطا: ' + (e.message||e)); btn.disabled = false; btn.innerText = 'ثبت اجرا'; }
+  };
+
+  window.NABZ._edMarQuickHold = async function(marId) {
+    const reason = prompt('دلیل عدم اجرا (۵+ کاراکتر):');
+    if (!reason || reason.length < 5) return;
+    try { await apiCall('/api/ed/mar/' + encodeURIComponent(marId), { method: 'POST', body: JSON.stringify({ action: 'held', reason }) }); if (typeof NABZ._toast === 'function') NABZ._toast('متوقف شد'); show(); }
+    catch(e) { alert('خطا: ' + (e.message||e)); }
+  };
+
+  window.NABZ._edMarAction = window.NABZ._edMarOpen;
 
   window.NABZ._edSaveVitals = async function() {
     try {
@@ -217,7 +367,22 @@
       document.getElementById('content').innerHTML = h;
     } catch(e) { console.error("[ED UI Error]", e);  document.getElementById('content').innerHTML = '<div style="color:#dc2626;padding:20px">خطا: ' + e.message + '</div>'; }
   }
-  window.NABZ._edNursingPick = function(pid){ state.patientId = pid; show(); };
+  window.NABZ._edNursingPick_rich = function(visitId) {
+    state.patientId = visitId;
+    try { const u = new URL(window.location.href); u.searchParams.set('visitId', visitId); u.searchParams.delete('patientId'); window.history.replaceState({}, '', u.toString()); } catch (_) {}
+    show();
+  };
+
+  window.NABZ._edNursingPick = function(pid) {
+    state.patientId = pid;
+    try {
+      const u = new URL(window.location.href);
+      u.searchParams.set('visitId', pid);
+      u.searchParams.delete('patientId');
+      window.history.replaceState({}, '', u.toString());
+    } catch (_) {}
+    show();
+  };;
   if (typeof NABZ !== 'undefined' && typeof NABZ.registerKind === 'function') {
     NABZ.registerKind('ed_nursing', show);
   }
