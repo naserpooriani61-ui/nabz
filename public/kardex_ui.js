@@ -576,6 +576,8 @@
       let h = '';
       h += renderRibbon(d.patient);
       h += renderVitalsStrip(d.currentVitals, d.trends || {}, d.vitals || d._rawVitals || []);
+      // UDES quick bar
+      if (window.NABZ && typeof NABZ.udesQuickBar === 'function' && d && d.patient && d.patient.id) h += NABZ.udesQuickBar(d.patient.id);
       h += renderNews2Trend(d.vitals || d._rawVitals || []);
       h += renderUrgent(d.urgent);
 

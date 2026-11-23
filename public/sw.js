@@ -1,4 +1,4 @@
-const CACHE = 'nabz-v62';
+const CACHE = 'nabz-v64';
 self.addEventListener('install', e => {
   self.skipWaiting();
 });

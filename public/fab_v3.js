@@ -43,7 +43,7 @@
     if (isSup) nav.push({ icon: '🏛️', title: 'داشبورد سوپروایزر', sub: 'راند، آمار، گزارش', action: function() { NABZ.show('supervisor.supervisor_dashboard'); } });
     nav.push({ icon: '🚨', title: 'مرکز فرماندهی اورژانس', sub: 'تابلو، ترایاژ، کدها', action: function() { NABZ.show('emergency_full.er_command'); } });
     if (isNurse) nav.push({ icon: '🩺', title: 'فضای کار پرستاری', sub: 'worklist بیماران', action: function() { NABZ.show('emergency.ed_nursing'); } });
-    nav.push({ icon: '📊', title: 'کاردکس بیمار', sub: 'با وارد کردن شماره', action: function() { var pid = prompt('شماره بیمار (مثلاً pat_001):'); if (pid) NABZ.show('kardex', { patientId: pid }); }});
+    nav.push({ icon: '📊', title: 'کاردکس بیمار', sub: 'انتخاب از لیست', action: async function() { var pt = await NABZ.patientPicker({ title: 'کاردکس — انتخاب بیمار' }); if (pt) NABZ.show('kardex', { patientId: pt.id }); }});
     nav.push({ icon: '🔍', title: 'جستجو', sub: 'نام بیمار، تخت', action: function() { if (NABZ.showSearch) NABZ.showSearch(); } });
     nav.push({ icon: '⚙️', title: 'همه ماژول‌ها', sub: 'دراور اصلی', action: function() { if (NABZ.showDrawer) NABZ.showDrawer(); } });
     groups.push({ label: '🧭 ناوبری', items: nav });
@@ -73,16 +73,23 @@
     return groups;
   }
 
-  function openForPatient(schemaId) {
-    var pid = (window.NABZ && NABZ.state && NABZ.state.currentPatient) || null;
-    if (!pid) { pid = prompt('شماره بیمار (مثلاً pat_001):'); if (!pid) return; }
-    var ctx = { patientId: pid };
-    try {
-      if (NABZ.state && Array.isArray(NABZ.state.patients)) {
-        var pt = NABZ.state.patients.find(function(x) { return x.id === pid; });
-        if (pt) { ctx.patientName = ((pt.firstName || '') + ' ' + (pt.lastName || '')).trim(); ctx.wardCode = pt.wardCode; ctx.bedNumber = pt.bedNumber; }
-      }
-    } catch (e) {}
+  async function openForPatient(schemaId) {
+    var pt = null;
+    if (window.NABZ && NABZ.state && NABZ.state.currentPatient) {
+      var cpid = NABZ.state.currentPatient;
+      try {
+        if (NABZ.state.patients) pt = NABZ.state.patients.find(function(x) { return x.id === cpid; });
+      } catch (e) {}
+      if (!pt) pt = { id: cpid };
+    }
+    if (!pt) {
+      pt = await NABZ.patientPicker({ title: 'انتخاب بیمار' });
+      if (!pt) return;
+    }
+    var ctx = { patientId: pt.id };
+    if (pt.firstName || pt.lastName) ctx.patientName = ((pt.firstName || '') + ' ' + (pt.lastName || '')).trim();
+    if (pt.wardCode) ctx.wardCode = pt.wardCode;
+    if (pt.bedNumber) ctx.bedNumber = pt.bedNumber;
     if (window.NABZ && typeof NABZ.openForm === 'function') NABZ.openForm(schemaId, ctx, function() { try { if (NABZ.refresh) NABZ.refresh(); } catch (e) {} });
     else alert('UDES بارگذاری نشده');
   }
