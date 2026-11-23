@@ -126,6 +126,7 @@
 <script src="/kardex_ui.js"></script>
 <script src="/ed_triage_ui.js"></script>
 <script src="/ed_nursing_ui.js"></script>
+<script src="/ed_physician_ui.js?v=1"></script>
 <script src="/kardex_shift_ui.js"></script>
 <script src="/handover_print.js"></script>
 <script src="/alert_stream_ui.js"></script>
@@ -134,7 +135,10 @@
   <script src="mar_patient_ui.js?v=1794884693367"></script>
 <script src="/vitals_ui.js"></script>
 <script src="/ed_cc_ui.js?v=28b"></script>
+<script src="/ed_tasks_ui.js?v=1"></script>
 <script src="/supervisor_ui.js"></script>
+<script src="/fab_v3.js"></script>
+<script src="/udes.js"></script>
 
 
 
@@ -150,5 +154,18 @@
   });
 </script>
 
+
+  <!-- NABZ Supervisor Floating Navigation Button -->
+  <button onclick="if(typeof NABZ!=='undefined' && typeof NABZ.show==='function') NABZ.show('supervisor_dashboard'); else window.location.href='/?view=supervisor_dashboard';" 
+          style="position: fixed; bottom: 80px; left: 24px; width: 64px; height: 64px; border-radius: 50%; background: linear-gradient(135deg, #4c1d95 0%, #1e40af 100%); color: #fff; border: 2px solid rgba(255,255,255,0.2); box-shadow: 0 8px 16px rgba(30, 64, 175, 0.4); font-size: 28px; cursor: pointer; z-index: 9990; display: flex; align-items: center; justify-content: center; transition: transform 0.2s ease;"
+          onmouseenter="this.style.transform='scale(1.1)'" 
+          onmouseleave="this.style.transform='scale(1)'"
+          title="داشبورد سوپروایزر">
+    🏛️
+  </button>
+
+<script src="nursing_shift_ui.js"></script>
+<script src="shift_roster_ui.js"></script>
+<script src="nursing_shifts_ui.js"></script>
 </body>
 </html>
