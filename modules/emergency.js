@@ -460,7 +460,6 @@ module.exports = {
     { method: 'POST', path: '/api/emergency/codes',       handler: 'codeActivate', perm: 'ed.code.activate' },
     { method: 'GET',  path: '/api/emergency/mci',         handler: 'mci',          perm: 'ed.view' },
     { method: 'POST', path: '/api/emergency/mci',         handler: 'mciActivate',  perm: 'ed.mci.activate' },
-    { method: 'GET',  path: '/api/erf/overview',      handler: 'erfOverview',  perm: 'ed.view' },
     { method: 'GET',  path: '/api/emergency/stats',       handler: 'edStats',      perm: 'ed.view' },
     { method: 'POST', path: '/api/emergency/visits/:id/triage', handler: 'visitTriage', perm: 'ed.triage' },
     { method: 'POST', path: '/api/emergency/codes/:id/step', handler: 'codeStep',  perm: 'ed.code.activate' },

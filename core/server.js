@@ -89,9 +89,14 @@ Object.assign(perms.P, {
 });
 
 const modDir = path.join(__dirname, '..', 'modules');
+// ─── Sub-modules merged into emergency.js ───
+// Skipped here so kernel does not register duplicate routes.
+// Their handlers/routes/panels are loaded via modules/emergency.js.
+const MERGED_SUBMODULES = new Set(['ed_extras', 'ed_nursing_report', 'ed_orders', 'ed_tasks', 'ed_physician']);
 if (fs.existsSync(modDir)) {
   for (const f of fs.readdirSync(modDir)) {
     if (!f.endsWith('.js')) continue;
+    if (MERGED_SUBMODULES.has(f.replace('.js', ''))) { continue; }   // loaded via emergency.js
     const name = f.replace('.js', '');
     try {
       MODS[name] = require('../modules/' + name);
