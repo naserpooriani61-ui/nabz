@@ -121,8 +121,8 @@
     h += '<button class="sup-hd-b" onclick="NABZ._supRefresh()">⟳</button></div>';
     h += '<div class="sup-tabs">';
     [['overview','📊 نمای کلی'],['wards','🏥 بخش‌ها'],['round','🏛️ راند'],
-     ['_soon_or','🏨 اتاق عمل'],['_soon_staff','👥 پرسنل'],['_soon_safety','🛡 ایمنی'],
-     ['_soon_inc','⚠️ حوادث'],['_soon_handover','📝 گزارش شیفت'],['_soon_analytics','📈 تحلیل']].forEach(function(t) {
+     ['or','🏨 اتاق عمل'],['staff','👥 پرسنل'],['safety','🛡 ایمنی'],
+     ['incidents','⚠️ حوادث'],['handover','📝 گزارش شیفت'],['analytics','📈 تحلیل']].forEach(function(t) {
       var soon = t[0].indexOf('_soon_') === 0;
       var cls = 'sup-tab' + (state.tab === t[0] ? ' active' : '') + (soon ? ' disabled' : '');
       h += '<div class="' + cls + '" onclick="NABZ._supTab(\'' + t[0] + '\')">' + t[1] + (soon ? ' 🔒' : '') + '</div>';
@@ -135,9 +135,13 @@
   function renderTab() {
     var el = document.getElementById('sup-body');
     if (!el) return;
-    if (state.tab === 'overview') renderOverview(el);
-    else if (state.tab === 'wards') renderWards(el);
-    else if (state.tab === 'round') renderRound(el);
+    var fns = {
+      overview: renderOverview, wards: renderWards, round: renderRound,
+      or: renderOR, staff: renderStaff, safety: renderSafety,
+      incidents: renderIncidents, handover: renderHandover, analytics: renderAnalytics
+    };
+    var fn = fns[state.tab];
+    if (fn) fn(el);
   }
 
   function renderOverview(el) {
@@ -239,24 +243,62 @@
   }
 
   async function startRound(wardCode, wardLabel) {
+    state._lastWard = wardCode;
+    state._lastWardLabel = wardLabel || wardCode;
     try {
       var today = await api('/api/supervisor/round/today');
       var existing = (today.items || []).find(function(r) { return r.wardCode === wardCode && r.shiftType === state.shiftType; });
-      if (existing) { state.activeRound = existing; renderApp(); return; }
+      if (existing && existing.id) { state.activeRound = existing; renderApp(); return; }
       var created = await post('/api/supervisor/round', { wardCode: wardCode, wardLabel: wardLabel || wardCode, shiftType: state.shiftType });
+      if (!created || !created.id) {
+        toast('❌ ' + ((created && created.error) || 'ساخت راند ناموفق'));
+        return;
+      }
       state.activeRound = created;
       renderApp();
-    } catch (e) { toast('❌ ' + (e.message || e)); }
+    } catch (e) { toast('❌ ' + ((e && (e.message || e.error)) || 'خطا')); }
   }
+
 
   async function viewRound(roundId) {
     try {
       var today = await api('/api/supervisor/round/today');
       var r = (today.items || []).find(function(x) { return x.id === roundId; });
-      if (!r) { toast('راند یافت نشد'); return; }
+      if (!r) {
+        toast('⚠️ راند در سرور نیست، بازسازی...');
+        await recoverRound();
+        return;
+      }
       state.activeRound = r;
+      state._lastWard = r.wardCode;
+      state._lastWardLabel = r.wardLabel;
       renderApp();
-    } catch (e) { toast('❌ ' + e.message); }
+    } catch (e) { toast('❌ ' + ((e && (e.message || e.error)) || 'خطا')); }
+  }
+
+
+  async function recoverRound() {
+    var wc = (state.activeRound && state.activeRound.wardCode) || state._lastWard || null;
+    var wl = (state.activeRound && state.activeRound.wardLabel) || state._lastWardLabel || wc;
+    if (!wc) { toast('❌ بخش مشخص نیست'); return false; }
+    var oldId = state.activeRound && state.activeRound.id;
+    state.activeRound = null;
+    try {
+      var today = await api('/api/supervisor/round/today');
+      var existing = (today.items || []).find(function(r) {
+        return r.wardCode === wc && r.shiftType === state.shiftType;
+      });
+      if (existing && existing.id) { state.activeRound = existing; renderApp(); return true; }
+      var created = await post('/api/supervisor/round', { wardCode: wc, wardLabel: wl || wc, shiftType: state.shiftType });
+      if (created && created.id) {
+        console.log('[recover] old:', oldId, '→ new:', created.id);
+        state.activeRound = created;
+        renderApp();
+        return true;
+      }
+    } catch (e) { console.error('[recover]', e); }
+    toast('❌ بازسازی ناموفق');
+    return false;
   }
 
   function renderRoundForm(el) {
@@ -265,9 +307,119 @@
     var isDraft = r.status === 'draft';
     var m = r.metrics || {};
     var sf = r.staffing || {};
+    var dt = r.details || {};
+
+    if (!document.getElementById('sup-style-detail')) {
+      var st3 = document.createElement('style');
+      st3.id = 'sup-style-detail';
+      st3.textContent = '.sup-detail-section{background:#fff;border-radius:14px;border:1px solid #e2e8f0;box-shadow:0 1px 3px rgba(15,23,42,.06);margin-bottom:12px;overflow:hidden}'
+        + '.sup-detail-header{padding:12px 14px;background:#f8fafc;border-bottom:1px solid #e2e8f0;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px}'
+        + '.sup-detail-title{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:800;color:#0f172a}'
+        + '.sup-detail-count{background:#1e4d8c;color:#fff;padding:2px 10px;border-radius:12px;font-size:11px;font-weight:800;min-width:24px;text-align:center}'
+        + '.sup-detail-hint{font-size:10px;color:#d97706;font-weight:700;padding:2px 8px;background:#fef3c7;border-radius:8px}'
+        + '.sup-detail-empty{padding:20px;text-align:center;color:#94a3b8;font-size:11px}'
+        + '.sup-detail-list{padding:10px}'
+        + '.sup-detail-card{background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:10px;margin-bottom:8px}'
+        + '.sup-detail-card-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;font-size:11px;color:#64748b;font-weight:700}'
+        + '.sup-detail-remove{width:26px;height:26px;border-radius:50%;border:1px solid #fca5a5;background:#fef2f2;color:#dc2626;font-weight:900;cursor:pointer;font-size:14px;line-height:1}'
+        + '.sup-detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}'
+        + '.sup-detail-field.full{grid-column:span 2}'
+        + '.sup-detail-field label{display:block;font-size:10px;color:#475569;font-weight:700;margin-bottom:3px}'
+        + '.sup-detail-field input,.sup-detail-field select{width:100%;padding:6px 8px;border:1px solid #cbd5e1;border-radius:6px;font-size:11px;direction:rtl;background:#fff;color:#0f172a;font-family:inherit;box-sizing:border-box}'
+        + '.sup-detail-readonly{padding:6px 8px;font-size:11px;color:#0f172a;background:#fff;border-radius:6px;border:1px solid #e2e8f0;min-height:18px}';
+      document.head.appendChild(st3);
+    }
+
+    var SCHEMAS = {
+      isolated: { label: 'ایزوله', icon: '🔒', fields: [
+        { key: 'name', label: 'نام بیمار', type: 'text', req: true, w: 'full' },
+        { key: 'mrn', label: 'MRN', type: 'text', w: 'half' },
+        { key: 'isolationType', label: 'نوع ایزولاسیون', type: 'select', options: ['تماسی','قطره‌ای','هوایی','معکوس'], w: 'half' },
+        { key: 'startDate', label: 'تاریخ شروع', type: 'date', w: 'half' }
+      ]},
+      ventilated: { label: 'تحت ونتیلاتور', icon: '🫁', fields: [
+        { key: 'name', label: 'نام بیمار', type: 'text', req: true, w: 'full' },
+        { key: 'ventilatorNo', label: 'شماره ونتیلاتور', type: 'text', w: 'half' },
+        { key: 'intubationDate', label: 'تاریخ اینتوباسیون', type: 'date', w: 'half' }
+      ]},
+      highRisk: { label: 'بیمار پرخطر', icon: '⚠️', fields: [
+        { key: 'name', label: 'نام بیمار', type: 'text', req: true, w: 'full' },
+        { key: 'riskType', label: 'نوع خطر', type: 'select', options: ['سقوط','زخم فشاری','خودکشی','تشنج','سوءتغذیه','سایر'], w: 'half' },
+        { key: 'notes', label: 'یادداشت', type: 'text', w: 'half' }
+      ]},
+      icuWaiting: { label: 'منتظر ICU', icon: '🏥', fields: [
+        { key: 'name', label: 'نام بیمار', type: 'text', req: true, w: 'full' },
+        { key: 'fromWard', label: 'از بخش', type: 'text', w: 'half' },
+        { key: 'targetIcu', label: 'ICU مقصد', type: 'text', w: 'half' },
+        { key: 'waitingSince', label: 'از ساعت', type: 'time', w: 'half' }
+      ]},
+      transfusion: { label: 'ترانسفوزیون', icon: '🩸', fields: [
+        { key: 'name', label: 'نام بیمار', type: 'text', req: true, w: 'full' },
+        { key: 'mrn', label: 'MRN', type: 'text', w: 'half' },
+        { key: 'productType', label: 'فرآورده', type: 'select', options: ['PRBC','FFP','Platelet','Cryo'], w: 'half' },
+        { key: 'units', label: 'تعداد واحد', type: 'number', w: 'half' },
+        { key: 'startTime', label: 'ساعت شروع', type: 'time', w: 'half' },
+        { key: 'endTime', label: 'ساعت پایان', type: 'time', w: 'half' },
+        { key: 'reaction', label: 'واکنش', type: 'select', options: ['ندارد','خفیف','شدید'], w: 'half' }
+      ]},
+      waitingSurgery: { label: 'منتظر عمل', icon: '🔪', fields: [
+        { key: 'name', label: 'نام بیمار', type: 'text', req: true, w: 'full' },
+        { key: 'surgeryType', label: 'نوع عمل', type: 'text', w: 'full' },
+        { key: 'surgeon', label: 'جراح', type: 'text', w: 'half' },
+        { key: 'plannedDate', label: 'تاریخ برنامه', type: 'date', w: 'half' },
+        { key: 'delayReason', label: 'علت تأخیر', type: 'text', w: 'full' }
+      ]},
+      cancelledSurgery: { label: 'کنسلی عمل', icon: '❌', fields: [
+        { key: 'name', label: 'نام بیمار', type: 'text', req: true, w: 'full' },
+        { key: 'surgeryType', label: 'نوع عمل', type: 'text', w: 'half' },
+        { key: 'reason', label: 'دلیل کنسلی', type: 'text', w: 'half' }
+      ]},
+      dialysis: { label: 'دیالیز', icon: '💧', fields: [
+        { key: 'name', label: 'نام بیمار', type: 'text', req: true, w: 'full' },
+        { key: 'dialysisType', label: 'نوع', type: 'select', options: ['HD','CRRT','PD'], w: 'half' },
+        { key: 'session', label: 'نوبت', type: 'text', w: 'half' },
+        { key: 'machine', label: 'دستگاه', type: 'text', w: 'half' },
+        { key: 'time', label: 'ساعت', type: 'time', w: 'half' }
+      ]},
+      markerPositive: { label: 'مارکر مثبت', icon: '🧬', fields: [
+        { key: 'name', label: 'نام بیمار', type: 'text', req: true, w: 'full' },
+        { key: 'markerType', label: 'نوع مارکر', type: 'select', options: ['HBsAg','HCV','HIV','Other'], w: 'half' },
+        { key: 'isolated', label: 'ایزوله شد؟', type: 'select', options: ['بله','خیر'], w: 'half' }
+      ]},
+      febrile: { label: 'تبدار', icon: '🌡', fields: [
+        { key: 'name', label: 'نام بیمار', type: 'text', req: true, w: 'full' },
+        { key: 'temp', label: 'دما (°C)', type: 'number', w: 'half' },
+        { key: 'suspectedCause', label: 'علت مشکوک', type: 'text', w: 'half' }
+      ]},
+      newAdmissions: { label: 'پذیرش جدید', icon: '🆕', fields: [
+        { key: 'name', label: 'نام بیمار', type: 'text', req: true, w: 'full' },
+        { key: 'source', label: 'منبع', type: 'select', options: ['اورژانس','درمانگاه','انتقالی','الکتیو'], w: 'half' },
+        { key: 'diagnosis', label: 'تشخیص', type: 'text', w: 'half' }
+      ]},
+      transfers: { label: 'انتقالی', icon: '🔄', fields: [
+        { key: 'name', label: 'نام بیمار', type: 'text', req: true, w: 'full' },
+        { key: 'from', label: 'از بخش', type: 'text', w: 'half' },
+        { key: 'to', label: 'به بخش', type: 'text', w: 'half' },
+        { key: 'reason', label: 'علت', type: 'text', w: 'full' }
+      ]},
+      pendingDischarge: { label: 'ترخیص نرفته', icon: '📤', fields: [
+        { key: 'name', label: 'نام بیمار', type: 'text', req: true, w: 'full' },
+        { key: 'delayReason', label: 'علت تأخیر', type: 'text', w: 'half' },
+        { key: 'plan', label: 'برنامه', type: 'text', w: 'half' }
+      ]},
+      deaths: { label: 'فوتی', icon: '⚰️', fields: [
+        { key: 'name', label: 'نام بیمار', type: 'text', req: true, w: 'full' },
+        { key: 'mrn', label: 'MRN', type: 'text', w: 'half' },
+        { key: 'cprTime', label: 'ساعت CPR', type: 'time', w: 'half' },
+        { key: 'deathTime', label: 'ساعت فوت', type: 'time', w: 'half' },
+        { key: 'cause', label: 'علت', type: 'text', w: 'half' },
+        { key: 'certIssued', label: 'گواهی صادر شد؟', type: 'select', options: ['بله','خیر'], w: 'half' },
+        { key: 'code99', label: 'کد ۹۹؟', type: 'select', options: ['بله','خیر'], w: 'half' }
+      ]}
+    };
+
     var h = '';
 
-    // header
     h += '<div class="sup-sec" style="background:linear-gradient(135deg,#1e4d8c,#0f172a);color:#fff;border:none"><div style="padding:14px">';
     h += '<div style="display:flex;justify-content:space-between;align-items:center"><div>';
     h += '<div style="font-size:11px;opacity:.8">راند بخش · ' + (r.shiftType === 'morning' ? 'صبح' : r.shiftType === 'evening' ? 'عصر' : 'شب') + '</div>';
@@ -275,85 +427,74 @@
     h += '<button class="sup-btn" onclick="NABZ._supBackToCoverage()" style="background:rgba(255,255,255,.2);color:#fff">→ بازگشت</button>';
     h += '</div><div style="font-size:11px;opacity:.8;margin-top:8px">' + (isDraft ? '✏️ پیش‌نویس' : r.status === 'submitted' ? '📤 ثبت شده' : '✅ امضا شده') + ' · ' + fa(r.date) + '</div></div></div>';
 
-    // ─── Section 1: Auto Metrics ───
-    h += '<div class="sup-sec"><div class="sup-sec-h"><span>🟢 آمار خودکار (از سیستم)</span>';
-    if (isDraft) h += '<button class="sup-btn" style="padding:3px 8px;font-size:10px" onclick="NABZ._supRefreshAuto(\'' + r.id + '\')">⟳ بروزرسانی</button>';
+    h += '<div class="sup-sec"><div class="sup-sec-h"><span>🟢 آمار خودکار</span>';
+    if (isDraft) h += '<button class="sup-btn" style="padding:3px 8px;font-size:10px" onclick="NABZ._supRefreshAuto(\'' + r.id + '\')">⟳</button>';
     h += '</div><div class="sup-metrics-grid">';
-    var autos = [
-      ['patientsTotal', 'بیمار کل', '👥'],
-      ['bedsOccupied', 'اشغال', '🛏'],
-      ['bedsEmpty', 'خالی', '✅'],
-      ['ventilated', 'ونت', '🫁'],
-      ['isolated', 'ایزوله', '🔒'],
-      ['highRisk', 'پرخطر', '⚠️'],
-      ['icuWaiting', 'منتظر ICU', '🏥']
-    ];
-    autos.forEach(function(a) {
-      var k = a[0], lbl = a[1], ico = a[2];
-      h += '<div class="sup-metric-card"><div class="sup-metric-i">' + ico + '</div><div class="sup-metric-v">' + fa(m[k] || 0) + '</div><div class="sup-metric-l">' + lbl + '</div></div>';
+    [['patientsTotal','بیمار کل','👥'],['bedsOccupied','اشغال','🛏'],['bedsEmpty','خالی','✅']].forEach(function(a) {
+      h += '<div class="sup-metric-card"><div class="sup-metric-i">' + a[2] + '</div><div class="sup-metric-v">' + fa(m[a[0]] || 0) + '</div><div class="sup-metric-l">' + a[1] + '</div></div>';
     });
     h += '</div></div>';
 
-    // ─── Section 2: Manual Metrics ───
-    h += '<div class="sup-sec"><div class="sup-sec-h"><span>✍️ آمار دستی</span><span style="font-size:11px;color:#64748b">' + (isDraft ? 'قابل ویرایش' : 'خواندنی') + '</span></div><div class="sup-metrics-grid">';
-    var manuals = [
-      ['waitingSurgery', 'منتظر عمل', '⏳'],
-      ['cancelledSurgery', 'کنسلی عمل', '❌'],
-      ['dialysis', 'دیالیزی', '💧'],
-      ['markerPositive', 'مارکر+', '🧬'],
-      ['febrile', 'تبدار', '🌡'],
-      ['transfusion', 'ترانسفوزیون', '🩸'],
-      ['newAdmissions', 'پذیرش جدید', '🆕'],
-      ['transfers', 'انتقالی', '🔄'],
-      ['pendingDischarge', 'ترخیص نرفته', '📤'],
-      ['deaths', 'فوتی', '⚰️']
-    ];
-    manuals.forEach(function(a) {
-      var k = a[0], lbl = a[1], ico = a[2];
-      h += '<div class="sup-metric-card manual">';
-      h += '<div class="sup-metric-i">' + ico + '</div>';
-      if (isDraft) {
-        h += '<div class="sup-metric-input"><button onclick="NABZ._supMetricDec(\'' + r.id + '\',\'' + k + '\')">−</button>';
-        h += '<input type="number" value="' + (m[k] || 0) + '" min="0" onchange="NABZ._supMetricSet(\'' + r.id + '\',\'' + k + '\',this.value)">';
-        h += '<button onclick="NABZ._supMetricInc(\'' + r.id + '\',\'' + k + '\')">+</button></div>';
-      } else {
-        h += '<div class="sup-metric-v">' + fa(m[k] || 0) + '</div>';
-      }
-      h += '<div class="sup-metric-l">' + lbl + '</div></div>';
-    });
-    h += '</div>';
-    if (isDraft) {
-      h += '<div style="padding:0 14px 14px"><label style="display:block;font-size:11px;font-weight:700;margin-bottom:4px;color:#475569">غیرمرتبط</label>';
-      h += '<input type="text" class="sup-check-notes" value="' + esc(m.unrelated || '') + '" placeholder="موارد متفرقه" onblur="NABZ._supMetricSet(\'' + r.id + '\',\'unrelated\',this.value)"></div>';
-    } else if (m.unrelated) {
-      h += '<div style="padding:0 14px 14px;font-size:11px;color:#475569"><b>غیرمرتبط:</b> ' + esc(m.unrelated) + '</div>';
-    }
-    h += '</div>';
+    Object.keys(SCHEMAS).forEach(function(key) {
+      var sch = SCHEMAS[key];
+      var items = dt[key] || [];
+      var autoHint = ['isolated','ventilated','highRisk','icuWaiting'].indexOf(key) !== -1 ? m[key] : null;
 
-    // ─── Section 3: Staffing ───
-    h += '<div class="sup-sec"><div class="sup-sec-h"><span>👥 پرسنل شیفت</span></div><div style="padding:14px">';
-    var fields = [
-      ['shiftSupervisor', 'مسئول شیفت', 'text'],
-      ['nurses', 'تعداد پرستار', 'number'],
-      ['nursesNames', 'نام پرستاران', 'text'],
-      ['nurseAides', 'تعداد کمک‌بهیار', 'number'],
-      ['nurseAidesNames', 'نام کمک‌بهیاران', 'text'],
-      ['secretary', 'منشی', 'text'],
-      ['absent', 'غایب', 'text']
-    ];
-    fields.forEach(function(f) {
-      var k = f[0], lbl = f[1], type = f[2];
-      h += '<div class="sup-form-group"><label>' + lbl + '</label>';
-      if (isDraft) {
-        h += '<input type="' + type + '" class="sup-check-notes" value="' + esc(sf[k] || '') + '" onblur="NABZ._supStaffSet(\'' + r.id + '\',\'' + k + '\',this.value)">';
+      h += '<div class="sup-detail-section">';
+      h += '<div class="sup-detail-header">';
+      h += '<div class="sup-detail-title">' + sch.icon + ' <span>' + sch.label + '</span><span class="sup-detail-count">' + fa(items.length) + '</span>';
+      if (autoHint != null && autoHint !== items.length) h += '<span class="sup-detail-hint">سیستم: ' + fa(autoHint) + '</span>';
+      h += '</div>';
+      if (isDraft) h += '<button class="sup-btn primary" style="padding:4px 10px;font-size:11px" onclick="NABZ._supAddDetail(\'' + r.id + '\',\'' + key + '\')">+ افزودن</button>';
+      h += '</div>';
+
+      if (!items.length) {
+        h += '<div class="sup-detail-empty">موردی ثبت نشده — با «+» اضافه کنید</div>';
       } else {
-        h += '<div style="font-size:12px;padding:6px 0">' + esc(sf[k] || '—') + '</div>';
+        h += '<div class="sup-detail-list">';
+        items.forEach(function(item, idx) {
+          h += '<div class="sup-detail-card">';
+          h += '<div class="sup-detail-card-head"><span>#' + fa(idx + 1) + '</span>';
+          if (isDraft) h += '<button class="sup-detail-remove" onclick="NABZ._supRemoveDetail(\'' + r.id + '\',\'' + key + '\',\'' + item._id + '\')">×</button>';
+          h += '</div>';
+          h += '<div class="sup-detail-grid">';
+          sch.fields.forEach(function(f) {
+            var w = f.w === 'half' ? 'sup-detail-field half' : 'sup-detail-field full';
+            var val = item[f.key] != null ? item[f.key] : '';
+            h += '<div class="' + w + '"><label>' + f.label + (f.req ? ' *' : '') + '</label>';
+            if (!isDraft) {
+              h += '<div class="sup-detail-readonly">' + esc(val || '—') + '</div>';
+            } else if (f.type === 'select') {
+              h += '<select onchange="NABZ._supUpdateDetail(\'' + r.id + '\',\'' + key + '\',\'' + item._id + '\',\'' + f.key + '\',this.value)">';
+              h += '<option value="">—</option>';
+              f.options.forEach(function(opt) {
+                h += '<option value="' + esc(opt) + '"' + (String(val) === String(opt) ? ' selected' : '') + '>' + esc(opt) + '</option>';
+              });
+              h += '</select>';
+            } else {
+              h += '<input type="' + f.type + '" value="' + esc(val) + '" onchange="NABZ._supUpdateDetail(\'' + r.id + '\',\'' + key + '\',\'' + item._id + '\',\'' + f.key + '\',this.value)">';
+            }
+            h += '</div>';
+          });
+          h += '</div></div>';
+        });
+        h += '</div>';
+      }
+      h += '</div>';
+    });
+
+    h += '<div class="sup-sec"><div class="sup-sec-h"><span>👥 پرسنل شیفت</span></div><div style="padding:14px">';
+    [['shiftSupervisor','مسئول شیفت','text'],['nurses','تعداد پرستار','number'],['nursesNames','نام پرستاران','text'],['nurseAides','تعداد کمک‌بهیار','number'],['nurseAidesNames','نام کمک‌بهیارها','text'],['secretary','منشی','text'],['absent','غایب','text']].forEach(function(f) {
+      h += '<div class="sup-form-group" style="margin-bottom:10px"><label style="display:block;font-size:11px;font-weight:700;margin-bottom:4px;color:#475569">' + f[1] + '</label>';
+      if (isDraft) {
+        h += '<input type="' + f[2] + '" value="' + esc(sf[f[0]] || '') + '" onblur="NABZ._supStaffSet(\'' + r.id + '\',\'' + f[0] + '\',this.value)" style="width:100%;padding:6px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:11px;direction:rtl;background:#fff;color:#0f172a;box-sizing:border-box">';
+      } else {
+        h += '<div style="font-size:12px;padding:6px 0">' + esc(sf[f[0]] || '—') + '</div>';
       }
       h += '</div>';
     });
     h += '</div></div>';
 
-    // ─── Section 4: Quality checklist (collapsible) ───
     h += '<details class="sup-sec"><summary class="sup-sec-h" style="cursor:pointer;list-style:none"><span>📋 ارزیابی کیفیت (JCI)</span><span style="font-size:11px;color:#64748b">اختیاری</span></summary><div style="padding:0">';
     [['staffing','👥 پرسنل'],['equipment','🛠 تجهیزات'],['infection','🦠 کنترل عفونت'],['safety','🛡 ایمنی بیمار'],['medication','💊 دارو و مخدر'],['beds','🛏 تخت'],['other','📝 سایر']].forEach(function(c) {
       var cat = c[0], lbl = c[1];
@@ -377,7 +518,6 @@
     });
     h += '</div></details>';
 
-    // ─── Section 5: Findings ───
     h += '<div class="sup-sec"><div class="sup-sec-h"><span>⚠️ یافته‌ها</span><span style="font-size:11px;color:#64748b">' + fa((r.findings || []).length) + '</span></div>';
     if (!(r.findings || []).length) {
       h += '<div style="padding:20px;text-align:center;color:#64748b;font-size:11px">یافته‌ای نیست</div>';
@@ -396,7 +536,6 @@
     if (isDraft) h += '<div style="padding:10px;border-top:1px solid #e2e8f0"><button class="sup-btn primary" onclick="NABZ._supAddFinding(\'' + r.id + '\')">+ افزودن یافته</button></div>';
     h += '</div>';
 
-    // ─── Section 6: Final notes ───
     if (isDraft) {
       h += '<label style="display:block;font-size:11px;font-weight:700;margin-bottom:4px;color:#475569">📝 یادداشت پایانی</label>';
       h += '<textarea class="sup-textarea" placeholder="خلاصه راند..." onblur="NABZ._supFinalNotes(\'' + r.id + '\',this.value)">' + esc(r.finalNotes || '') + '</textarea>';
@@ -483,6 +622,308 @@
     } catch (e) { toast('❌ ' + e.message); }
   };
 
+  // ═══════ Tab 4: OR ═══════
+  function renderOR(el) {
+    var d = (state.data && state.data.or) || {};
+    var rooms = d.rooms || [];
+    var t = d.totals || {};
+    var h = '<div class="sup-kpi-grid">';
+    h += '<div class="sup-kpi"><div class="sup-kpi-v">' + fa(t.total || 0) + '</div><div class="sup-kpi-l">اتاق کل</div></div>';
+    h += '<div class="sup-kpi dng"><div class="sup-kpi-v">' + fa(t.inProgress || 0) + '</div><div class="sup-kpi-l">در حال عمل</div></div>';
+    h += '<div class="sup-kpi wrn"><div class="sup-kpi-v">' + fa(t.waiting || 0) + '</div><div class="sup-kpi-l">منتظر</div></div>';
+    h += '<div class="sup-kpi suc"><div class="sup-kpi-v">' + fa(t.scheduled || 0) + '</div><div class="sup-kpi-l">برنامه امروز</div></div>';
+    h += '</div>';
+    h += '<div class="sup-sec"><div class="sup-sec-h"><span>🏨 اتاق‌های عمل</span><span style="font-size:11px;color:#64748b">' + fa(rooms.length) + '</span></div>';
+    if (!rooms.length) {
+      h += '<div style="padding:30px;text-align:center;color:#64748b">داده‌ای نیست</div>';
+    } else {
+      rooms.forEach(function(r) {
+        var icon = r.inProgress > 0 ? '🔴' : (r.waiting > 0 ? '🟡' : '🟢');
+        h += '<div class="sup-ward-row"><div style="font-size:18px">' + icon + '</div>';
+        h += '<div style="flex:1"><div style="font-weight:800;font-size:12px">' + esc(r.name || r.id) + '</div>';
+        h += '<div style="font-size:10px;color:#64748b">' + esc(r.specialty || '—') + ' · ' + esc(r.wardCode || '—') + '</div></div>';
+        h += '<div class="sup-ward-stats"><span class="occ">درحال: ' + fa(r.inProgress || 0) + '</span>';
+        h += '<span>منتظر: ' + fa(r.waiting || 0) + '</span>';
+        h += '<span class="emp">کل: ' + fa(r.scheduled || 0) + '</span></div></div>';
+      });
+    }
+    h += '</div>';
+    el.innerHTML = h;
+  }
+
+  // ═══════ Tab 5: Staff ═══════
+  function renderStaff(el) {
+    var d = (state.data && state.data.staff) || {};
+    var onCall = d.onCallToday || [];
+    var rosters = d.todayRosters || [];
+    var byRole = d.usersByRole || {};
+    var t = d.totals || {};
+    var roleFa = {physician:'پزشک',nurse:'پرستار',head_nurse:'سرپرستار',nurse_aide:'کمک‌بهیار',midwife:'ماما',resident:'رزیدنت',attending:'استاد',other:'سایر'};
+    var h = '<div class="sup-kpi-grid">';
+    h += '<div class="sup-kpi"><div class="sup-kpi-v">' + fa(t.usersActive || 0) + '</div><div class="sup-kpi-l">کاربر فعال</div></div>';
+    h += '<div class="sup-kpi suc"><div class="sup-kpi-v">' + fa(onCall.length) + '</div><div class="sup-kpi-l">آنکال امروز</div></div>';
+    h += '<div class="sup-kpi wrn"><div class="sup-kpi-v">' + fa(rosters.length) + '</div><div class="sup-kpi-l">شیفت امروز</div></div>';
+    h += '<div class="sup-kpi"><div class="sup-kpi-v">' + fa(t.nurseAssignments || 0) + '</div><div class="sup-kpi-l">تخصیص پرستار</div></div>';
+    h += '</div>';
+    h += '<div class="sup-sec"><div class="sup-sec-h"><span>👥 توزیع نقش‌ها</span></div><div style="padding:12px">';
+    Object.keys(byRole).forEach(function(role) {
+      if (byRole[role] > 0) {
+        h += '<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #f1f5f9;font-size:12px"><span>' + (roleFa[role] || role) + '</span><b>' + fa(byRole[role]) + '</b></div>';
+      }
+    });
+    h += '</div></div>';
+    h += '<div class="sup-sec"><div class="sup-sec-h"><span>📞 آنکال امروز</span><span style="font-size:11px;color:#64748b">' + fa(onCall.length) + '</span></div>';
+    if (!onCall.length) {
+      h += '<div style="padding:20px;text-align:center;color:#64748b;font-size:11px">آنکال امروز ثبت نشده</div>';
+    } else {
+      onCall.forEach(function(o) {
+        h += '<div class="sup-ward-row"><div style="flex:1"><div style="font-weight:800;font-size:12px">' + esc(o.userName || o.name || '—') + '</div>';
+        h += '<div style="font-size:10px;color:#64748b">' + esc(o.wardCode || '—') + ' · ' + esc(o.role || '—') + '</div></div>';
+        if (o.phone) h += '<div style="font-size:11px;color:#1e4d8c;font-weight:700;direction:ltr">' + esc(o.phone) + '</div>';
+        h += '</div>';
+      });
+    }
+    h += '</div>';
+    el.innerHTML = h;
+  }
+
+  // ═══════ Tab 6: Safety ═══════
+  function renderSafety(el) {
+    var d = (state.data && state.data.safety) || {};
+    var hr = d.highRiskRegister || [];
+    var ptRisks = d.patientsWithRisks || [];
+    var t = d.totals || {};
+    var flagFa = {fall_risk:'سقوط', pressure_ulcer:'زخم فشاری', high_fall:'Morse بالا'};
+    var h = '<div class="sup-kpi-grid">';
+    h += '<div class="sup-kpi dng"><div class="sup-kpi-v">' + fa(t.highRiskRegister || 0) + '</div><div class="sup-kpi-l">ریسک بالا</div></div>';
+    h += '<div class="sup-kpi wrn"><div class="sup-kpi-v">' + fa(t.patientsFlagged || 0) + '</div><div class="sup-kpi-l">بیمار با فلگ</div></div>';
+    h += '</div>';
+    h += '<div class="sup-sec"><div class="sup-sec-h"><span>🔴 ثبت ریسک بالا</span><span style="font-size:11px;color:#64748b">' + fa(hr.length) + '</span></div>';
+    if (!hr.length) {
+      h += '<div style="padding:20px;text-align:center;color:#64748b;font-size:11px">ریسک بالایی ثبت نشده</div>';
+    } else {
+      hr.forEach(function(r) {
+        var lvl = (r.level || '').toLowerCase();
+        var sev = lvl === 'critical' ? 'critical' : (lvl === 'high' ? 'warning' : 'info');
+        h += '<div class="sup-finding ' + sev + '"><div class="sup-finding-b">';
+        h += '<div class="sup-finding-cat">' + esc(r.wardCode || '—') + ' · نمره: ' + fa(r.riskScore || 0) + '</div>';
+        h += '<div class="sup-finding-text">' + esc(r.title || '—') + '</div></div></div>';
+      });
+    }
+    h += '</div>';
+    h += '<div class="sup-sec"><div class="sup-sec-h"><span>⚠️ بیماران با فاکتور خطر</span><span style="font-size:11px;color:#64748b">' + fa(ptRisks.length) + '</span></div>';
+    if (!ptRisks.length) {
+      h += '<div style="padding:20px;text-align:center;color:#64748b;font-size:11px">بیماری با فاکتور خطر ثبت نشده</div>';
+    } else {
+      ptRisks.forEach(function(p) {
+        var flags = (p.flags || []).map(function(f) { return flagFa[f] || f; }).join(' · ');
+        h += '<div class="sup-ward-row"><div style="flex:1"><div style="font-weight:800;font-size:12px">' + esc(p.name || p.patientId) + '</div>';
+        h += '<div style="font-size:10px;color:#64748b">' + esc(p.wardCode || '—') + ' · تخت ' + esc(p.bedNumber || '?') + '</div></div>';
+        h += '<div style="font-size:10px;padding:2px 8px;border-radius:8px;background:#fef3c7;color:#92400e;font-weight:700">' + esc(flags) + '</div></div>';
+      });
+    }
+    h += '</div>';
+    el.innerHTML = h;
+  }
+
+  // ═══════ Tab 7: Incidents ═══════
+  async function renderIncidents(el) {
+    el.innerHTML = '<div class="sup-loading">در حال بارگذاری...</div>';
+    try {
+      var d = await api('/api/supervisor/incidents?days=7');
+      var inc = d.incidents || [];
+      var bySev = d.bySeverity || {};
+      var byCat = d.byCategory || {};
+      var t = d.totals || {};
+      var h = '<div class="sup-kpi-grid">';
+      h += '<div class="sup-kpi"><div class="sup-kpi-v">' + fa(t.count || 0) + '</div><div class="sup-kpi-l">۷ روز اخیر</div></div>';
+      h += '<div class="sup-kpi dng"><div class="sup-kpi-v">' + fa(bySev.critical || 0) + '</div><div class="sup-kpi-l">بحرانی</div></div>';
+      h += '<div class="sup-kpi wrn"><div class="sup-kpi-v">' + fa(bySev.major || 0) + '</div><div class="sup-kpi-l">جدی</div></div>';
+      h += '<div class="sup-kpi wrn"><div class="sup-kpi-v">' + fa(t.requiresRca || 0) + '</div><div class="sup-kpi-l">نیاز RCA</div></div>';
+      h += '</div>';
+      h += '<div class="sup-sec"><div class="sup-sec-h"><span>📊 دسته‌بندی</span></div><div style="padding:12px">';
+      var cats = Object.keys(byCat);
+      if (!cats.length) { h += '<div style="text-align:center;color:#64748b;font-size:11px">داده‌ای نیست</div>'; }
+      else { cats.forEach(function(c) { h += '<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #f1f5f9;font-size:12px"><span>' + esc(c) + '</span><b>' + fa(byCat[c]) + '</b></div>'; }); }
+      h += '</div></div>';
+      h += '<div class="sup-sec"><div class="sup-sec-h"><span>⚠️ حوادث</span><span style="font-size:11px;color:#64748b">' + fa(inc.length) + '</span></div>';
+      if (!inc.length) { h += '<div style="padding:20px;text-align:center;color:#64748b;font-size:11px">حادثه‌ای ثبت نشده</div>'; }
+      else {
+        inc.forEach(function(i) {
+          var s = (i.severity || 'unknown').toLowerCase();
+          var sev = s === 'critical' ? 'critical' : ((s === 'major' || s === 'high') ? 'warning' : 'info');
+          h += '<div class="sup-finding ' + sev + '"><div class="sup-finding-b">';
+          h += '<div class="sup-finding-cat">' + esc(i.category || '—') + ' · ' + esc(i.wardCode || '—') + '</div>';
+          h += '<div class="sup-finding-text">' + esc(i.description || i.title || '—') + '</div></div></div>';
+        });
+      }
+      h += '</div>';
+      el.innerHTML = h;
+    } catch (e) {
+      el.innerHTML = '<div style="padding:30px;text-align:center;color:#dc2626">خطا: ' + esc(e.message) + '</div>';
+    }
+  }
+
+  // ═══════ Tab 8: Handover ═══════
+  async function renderHandover(el) {
+    el.innerHTML = '<div class="sup-loading">در حال بارگذاری...</div>';
+    try {
+      var today = await api('/api/supervisor/handover/today');
+      var items = today.items || [];
+      var h = '<div class="sup-sec"><div class="sup-sec-h"><span>📝 گزارش شیفت امروز</span><span style="font-size:11px;color:#64748b">' + fa(today.date) + '</span></div>';
+      if (!items.length) {
+        h += '<div style="padding:20px;text-align:center;color:#64748b;font-size:11px">گزارشی برای امروز ثبت نشده</div>';
+      } else {
+        items.forEach(function(it) {
+          var shiftFa = {morning:'صبح', evening:'عصر', night:'شب'}[it.shiftType] || it.shiftType;
+          var statusFa = {draft:'✏️ پیش‌نویس', signed:'✍️ امضا شده', received:'✅ تحویل گرفته'}[it.status] || it.status;
+          var icon = it.shiftType === 'morning' ? '☀️' : (it.shiftType === 'evening' ? '🌅' : '🌙');
+          h += '<div class="sup-ward-card"><div class="sup-ward-card-inner" style="cursor:default">';
+          h += '<div class="sup-wc-ico">' + icon + '</div>';
+          h += '<div class="sup-wc-b"><div class="sup-wc-t">شیفت ' + shiftFa + '</div>';
+          h += '<div class="sup-wc-s">' + statusFa + ' · ' + esc(it.supervisorName || '—') + '</div></div>';
+          if (it.status === 'draft') {
+            h += '<button class="sup-btn primary" onclick="NABZ._supSignHandover(\'' + it.id + '\')">امضا</button>';
+          } else if (it.status === 'signed') {
+            h += '<button class="sup-btn success" onclick="NABZ._supReceiveHandover(\'' + it.id + '\')">تحویل</button>';
+          }
+          h += '</div></div>';
+        });
+      }
+      h += '</div>';
+      h += '<button class="sup-btn primary" style="width:100%;padding:14px;margin-top:14px;font-size:13px" onclick="NABZ._supNewHandover()">+ ثبت گزارش شیفت جدید</button>';
+      el.innerHTML = h;
+    } catch (e) {
+      el.innerHTML = '<div style="padding:30px;text-align:center;color:#dc2626">خطا: ' + esc(e.message) + '</div>';
+    }
+  }
+
+  // ═══════ Tab 9: Analytics ═══════
+  async function renderAnalytics(el) {
+    el.innerHTML = '<div class="sup-loading">در حال بارگذاری...</div>';
+    try {
+      var days = state.analyticsDays || 7;
+      var d = await api('/api/supervisor/analytics?days=' + days);
+      var adm = d.admissionsPerDay || {};
+      var ed = d.edVisitsPerDay || {};
+      var inc = d.incidentsPerDay || {};
+      var t = d.totals || {};
+      var h = '<div style="display:flex;gap:6px;margin-bottom:12px">';
+      [7, 30].forEach(function(dd) {
+        var active = days === dd ? 'primary' : '';
+        h += '<button class="sup-btn ' + active + '" onclick="NABZ._supAnalyticsDays(' + dd + ')">' + dd + ' روز</button>';
+      });
+      h += '</div>';
+      h += '<div class="sup-kpi-grid">';
+      h += '<div class="sup-kpi suc"><div class="sup-kpi-v">' + fa(t.admissions || 0) + '</div><div class="sup-kpi-l">پذیرش</div></div>';
+      h += '<div class="sup-kpi wrn"><div class="sup-kpi-v">' + fa(t.edVisits || 0) + '</div><div class="sup-kpi-l">مراجعه ED</div></div>';
+      h += '<div class="sup-kpi dng"><div class="sup-kpi-v">' + fa(t.incidents || 0) + '</div><div class="sup-kpi-l">حادثه</div></div>';
+      h += '</div>';
+      h += '<div class="sup-sec"><div class="sup-sec-h"><span>📈 روند روزانه</span></div><div style="padding:14px;overflow-x:auto">';
+      var allDays = Object.keys(adm).concat(Object.keys(ed)).concat(Object.keys(inc));
+      var uniqueDays = [];
+      allDays.forEach(function(dd) { if (uniqueDays.indexOf(dd) === -1) uniqueDays.push(dd); });
+      uniqueDays.sort();
+      if (!uniqueDays.length) {
+        h += '<div style="text-align:center;color:#64748b;font-size:11px">داده‌ای نیست</div>';
+      } else {
+        h += '<table style="width:100%;font-size:11px;border-collapse:collapse">';
+        h += '<tr style="background:#f8fafc"><th style="padding:6px;text-align:right;border-bottom:1px solid #e2e8f0">تاریخ</th><th style="padding:6px;text-align:center;border-bottom:1px solid #e2e8f0">پذیرش</th><th style="padding:6px;text-align:center;border-bottom:1px solid #e2e8f0">ED</th><th style="padding:6px;text-align:center;border-bottom:1px solid #e2e8f0">حادثه</th></tr>';
+        uniqueDays.forEach(function(dd) {
+          h += '<tr><td style="padding:6px;border-bottom:1px solid #f1f5f9">' + esc(dd) + '</td>';
+          h += '<td style="padding:6px;text-align:center;color:#059669;font-weight:700">' + fa(adm[dd] || 0) + '</td>';
+          h += '<td style="padding:6px;text-align:center;color:#d97706;font-weight:700">' + fa(ed[dd] || 0) + '</td>';
+          h += '<td style="padding:6px;text-align:center;color:#dc2626;font-weight:700">' + fa(inc[dd] || 0) + '</td></tr>';
+        });
+        h += '</table>';
+      }
+      h += '</div></div>';
+      el.innerHTML = h;
+    } catch (e) {
+      el.innerHTML = '<div style="padding:30px;text-align:center;color:#dc2626">خطا: ' + esc(e.message) + '</div>';
+    }
+  }
+
+  // ═══════ Handlers ═══════
+  NABZ._supNewHandover = async function() {
+    var shift = prompt('شیفت:\n1 = صبح\n2 = عصر\n3 = شب');
+    if (!shift) return;
+    var shifts = ['morning', 'evening', 'night'];
+    var st = shifts[Number(shift) - 1];
+    if (!st) { toast('نامعتبر'); return; }
+    var summary = prompt('خلاصه شیفت (اختیاری):') || '';
+    try {
+      await post('/api/supervisor/handover', { date: new Date().toISOString().slice(0, 10), shiftType: st, summary: summary });
+      toast('✅ گزارش ایجاد شد');
+      renderTab();
+    } catch (e) { toast('❌ ' + e.message); }
+  };
+  NABZ._supSignHandover = async function(id) {
+    if (!confirm('امضای گزارش؟')) return;
+    try { await post('/api/supervisor/handover/' + id + '/sign', {}); toast('✍️ امضا شد'); renderTab(); }
+    catch (e) { toast('❌ ' + e.message); }
+  };
+  NABZ._supReceiveHandover = async function(id) {
+    if (!confirm('تحویل گرفتن؟')) return;
+    try { await post('/api/supervisor/handover/' + id + '/receive', {}); toast('✅ تحویل شد'); renderTab(); }
+    catch (e) { toast('❌ ' + e.message); }
+  };
+  NABZ._supAnalyticsDays = function(days) {
+    state.analyticsDays = days;
+    renderTab();
+  };
+
+  NABZ._supAddDetail = async function(rid, key) {
+    async function tryAdd(id) {
+      try {
+        var r = await post('/api/supervisor/round/' + encodeURIComponent(id) + '/detail/' + encodeURIComponent(key), {});
+        if (r && r.ok === false) return { ok: false, err: r.error || r.message || 'ناموفق' };
+        if (!r || !r.id) return { ok: false, err: 'پاسخ نامعتبر' };
+        return { ok: true, round: r };
+      } catch (e) {
+        return { ok: false, err: (e && (e.message || e.error)) || 'خطا' };
+      }
+    }
+    var res = await tryAdd(rid);
+    if (res.ok) {
+      state.activeRound = res.round;
+      renderApp();
+      return;
+    }
+    if (String(res.err).indexOf('not_found') >= 0) {
+      toast('⚠️ راند پیدا نشد، بازسازی...');
+      var recovered = await recoverRound();
+      if (recovered && state.activeRound && state.activeRound.id) {
+        var retry = await tryAdd(state.activeRound.id);
+        if (retry.ok) {
+          state.activeRound = retry.round;
+          renderApp();
+          toast('✅ ثبت شد (راند بازسازی شد)');
+          return;
+        }
+        toast('❌ ' + (retry.err || 'خطای نامشخص'));
+        return;
+      }
+      return;
+    }
+    toast('❌ ' + res.err);
+  };
+
+  NABZ._supUpdateDetail = async function(rid, key, detailId, field, value) {
+    try {
+      var payload = {};
+      payload[field] = value;
+      state.activeRound = await post('/api/supervisor/round/' + rid + '/detail/' + key + '/' + detailId, payload);
+    } catch (e) { toast('❌ ' + e.message); }
+  };
+  NABZ._supRemoveDetail = async function(rid, key, detailId) {
+    if (!confirm('حذف این مورد؟')) return;
+    try {
+      state.activeRound = await post('/api/supervisor/round/' + rid + '/detail/' + key + '/' + detailId + '/remove', {});
+      renderApp();
+    } catch (e) { toast('❌ ' + e.message); }
+  };
+
   (function reg() {
     if (window.NABZ && typeof NABZ.registerKind === 'function') {
       NABZ.registerKind('supervisor_dashboard', show);
@@ -493,42 +934,5 @@
   })();
 })();
 
-// ═══ Floating Access Button ═══
-(function() {
-  function getRole() {
-    try {
-      if (window.NABZ && NABZ.state && NABZ.state.user && NABZ.state.user.role) return NABZ.state.user.role;
-      var u = localStorage.getItem('nabz_u');
-      if (u) { var p = JSON.parse(u); if (p && p.role) return p.role; }
-    } catch (e) {}
-    return null;
-  }
-  function tryAdd() {
-    var role = getRole();
-    if (!role) { setTimeout(tryAdd, 500); return; }
-    var allowed = ['admin','hospital_director','medical_director','nursing_director','supervisor_senior','supervisor_clinical','quality_officer','head_nurse','matron'];
-    if (allowed.indexOf(role) === -1) return;
-    if (document.getElementById('sup-float-btn')) return;
-    var btn = document.createElement('button');
-    btn.id = 'sup-float-btn';
-    btn.innerHTML = '🏛️';
-    btn.title = 'داشبورد سوپروایزر';
-    btn.style.cssText = 'position:fixed;bottom:90px;left:12px;width:52px;height:52px;border-radius:50%;background:linear-gradient(135deg,#1e4d8c,#0f172a);color:#fff;border:2px solid rgba(255,255,255,.3);font-size:24px;box-shadow:0 4px 16px rgba(30,77,140,.5);cursor:pointer;z-index:9998;display:flex;align-items:center;justify-content:center;transition:transform .2s;';
-    btn.onmouseenter = function() { btn.style.transform = 'scale(1.1)'; };
-    btn.onmouseleave = function() { btn.style.transform = 'scale(1)'; };
-    btn.onclick = function() {
-      try {
-        if (window.NABZ && NABZ._dispatchRegistry && typeof NABZ._dispatchRegistry['supervisor_dashboard'] === 'function') {
-          NABZ._dispatchRegistry['supervisor_dashboard']();
-        } else if (window.NABZ && NABZ.show) {
-          NABZ.show('supervisor.supervisor_dashboard');
-        } else {
-          alert('لطفاً صفحه را refresh کنید');
-        }
-      } catch (e) { alert('خطا: ' + e.message); }
-    };
-    document.body.appendChild(btn);
-    console.log('[supervisor_ui] floating button added for role:', role);
-  }
-  tryAdd();
-})();
+/* [FAB-REMOVED] FAB is now managed by fab_v3.js */
+

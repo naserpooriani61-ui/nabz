@@ -255,7 +255,74 @@ function saveAll(ctx, list, opts) {
   return list;
 }
 
+
+// ═══════════════════════════════════════════════════════
+// createFromOrder — creates MAR instance(s) for a verified order
+// Called on order.cosigned / attending_cosigned when status becomes 'verified'
+// ═══════════════════════════════════════════════════════
+function _parseFrequency(freq) {
+  if (!freq) return { interval: 0, count: 1, prn: false };
+  const f = String(freq).toLowerCase().trim();
+  if (f.includes('prn')) return { interval: 0, count: 1, prn: true };
+  const map = { 'q1h':60, 'q2h':120, 'q4h':240, 'q6h':360, 'q8h':480, 'q12h':720, 'qd':1440, 'daily':1440, 'bid':720, 'tid':480, 'qid':360, 'stat':0, 'once':0, 'daily_1':1440 };
+  if (map[f] != null) return { interval: map[f], count: map[f] === 0 ? 1 : 24 * 60 / map[f], prn: false };
+  return { interval: 0, count: 1, prn: false };
+}
+
+function createFromOrder(ctx, order, opts) {
+  const o = opts || {};
+  if (!order || !order.id) throw _err(ctx, 'mar:order_required');
+  const s = _store(ctx);
+  const now = _now(ctx);
+  
+  // Idempotency: if MAR already exists for this order, return it
+  const existing = s.readAll('mar').find(m => m.orderId === order.id);
+  if (existing) return existing;
+  
+  const freq = _parseFrequency(order.frequency);
+  const startAt = order.scheduledAt || order.startAt || now;
+  const baseTime = new Date(startAt).getTime();
+  
+  const drugs = order.item || order.drugName || order.name || 'دستور';
+  const highAlert = order.isHighAlert === true || order.attending_required === true;
+  
+  // Create the first MAR instance
+  const marId = _uid(ctx, 'mar');
+  const rec = {
+    id: marId,
+    orderId: order.id,
+    patientId: order.patientId,
+    visitId: order.visitId,
+    patientName: order.patientName || '',
+    wardCode: order.wardCode || 'ED',
+    drugName: drugs,
+    dose: order.dose || '',
+    route: order.route || '',
+    frequency: order.frequency || '',
+    scheduledAt: new Date(baseTime).toISOString(),
+    administeredAt: null,
+    administeredBy: null,
+    administeredByName: null,
+    witnessId: null,
+    witnessName: null,
+    witnessedAt: null,
+    administeredDose: null,
+    administeredRoute: null,
+    barcodes: null,
+    isHighAlert: highAlert,
+    fiveRights: null,
+    rightsMode: null,
+    status: freq.prn ? 'prn_available' : 'scheduled',
+    notes: null,
+    _trans: [{ at: now, action: 'created_from_order', orderId: order.id }]
+  };
+  s.put('mar', rec);
+  _emit(ctx, 'kardex.mar.scheduled', { record: rec, order });
+  return rec;
+}
+
+// ────────────────────────────────────────────────────────
 module.exports = {
   administer, partial, refuse, miss, hold, resume,
   userCancel, systemCancel, systemMiss, update, saveAll, EVENTS
-};
+, createFromOrder };

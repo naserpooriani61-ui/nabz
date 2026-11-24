@@ -4,6 +4,8 @@ const perms = require('../core/permissions');
 const S = require('../core/domain/supervisor-service');
 const H = require('../core/domain/shift-handover-writer');
 const WR = require('../core/domain/ward-round-writer');
+const SupRounds = require('../core/domain/supervisor-rounds');
+const SR = require('../core/domain/supervisor-report-writer');
 
 // ─── permissions ───
 const SUP_VIEW_ROLES = 'admin,hospital_director,medical_director,nursing_director,supervisor_senior,supervisor_clinical,quality_officer,head_nurse,matron';
@@ -43,7 +45,33 @@ const handlers = {
   roundMetrics:    (ctx) => WR.updateMetrics(ctx, ctx.params.id, ctx.body || {}),
   roundStaffing:   (ctx) => WR.updateStaffing(ctx, ctx.params.id, ctx.body || {}),
   roundRefreshAuto:(ctx) => WR.refreshAutoMetrics(ctx, ctx.params.id),
-  roundAutoMetrics:(ctx) => WR.getAutoMetrics(ctx, ctx.query && ctx.query.wardCode)
+  roundAutoMetrics:(ctx) => WR.getAutoMetrics(ctx, ctx.query && ctx.query.wardCode),
+  roundAddDetail:    (ctx) => WR.addDetail(ctx, ctx.params.id, ctx.params.key, ctx.body || {}),
+  roundUpdateDetail: (ctx) => WR.updateDetail(ctx, ctx.params.id, ctx.params.key, ctx.params.detailId, ctx.body || {}),
+  roundRemoveDetail: (ctx) => WR.removeDetail(ctx, ctx.params.id, ctx.params.key, ctx.params.detailId),
+  roundCreate: (ctx) => SupRounds.create(ctx, ctx.body || {}),
+  roundAddItem: (ctx) => SupRounds.addDynamicItem(ctx, ctx.params.id, ctx.params.array, ctx.body || {}),
+  roundRemoveItem: (ctx) => SupRounds.removeDynamicItem(ctx, ctx.params.id, ctx.params.array, ctx.params.itemId),
+  roundUpdateField: (ctx) => SupRounds.updateField(ctx, ctx.params.id, ctx.params.field, ctx.body.value),
+  roundSubmit: (ctx) => SupRounds.submit(ctx, ctx.params.id),
+  roundSign: (ctx) => SupRounds.sign(ctx, ctx.params.id),
+  roundListToday: (ctx) => SupRounds.listToday(ctx),
+  reportCreate: (ctx) => SupRounds.create(ctx, ctx.body || {}),
+  reportUpdate: (ctx) => SR.update(ctx, ctx.params.id, ctx.body || {}),
+  reportAddItem: (ctx) => SupRounds.addDynamicItem(ctx, ctx.params.id, ctx.params.array, ctx.body || {}),
+  reportRemoveItem: (ctx) => SupRounds.removeDynamicItem(ctx, ctx.params.id, ctx.params.array, ctx.params.itemId),
+  reportUpdateItem: (ctx) => SR.updateDynamicItem(ctx, ctx.params.id, ctx.params.array, ctx.params.itemId, ctx.body || {}),
+  reportSubmit: (ctx) => SupRounds.submit(ctx, ctx.params.id),
+  reportSign: (ctx) => SupRounds.sign(ctx, ctx.params.id),
+  reportToday: (ctx) => SupRounds.listToday(ctx),
+  reportRecent: (ctx) => SR.listRecent(ctx, ctx.query && ctx.query.days),
+  addDynamicItem: (ctx) => WR.addDynamicItem(ctx, ctx.params.id, ctx.params.array, ctx.body || {}),
+  removeDynamicItem: (ctx) => WR.removeDynamicItem(ctx, ctx.params.id, ctx.params.array, ctx.params.itemId),
+  updateDynamicItem: (ctx) => WR.updateDynamicItem(ctx, ctx.params.id, ctx.params.array, ctx.params.itemId, ctx.body || {}),
+  addDeath: (ctx) => WR.addDeath(ctx, ctx.params.id, ctx.body || {}),
+  removeDeath: (ctx) => WR.removeDeath(ctx, ctx.params.id, ctx.params.did),
+  addICUWaiting: (ctx) => WR.addICUWaiting(ctx, ctx.params.id, ctx.body || {}),
+  removeICUWaiting: (ctx) => WR.removeICUWaiting(ctx, ctx.params.id, ctx.params.iid)
 };
 
 module.exports = {
@@ -79,7 +107,33 @@ module.exports = {
     { method: 'POST', path: '/api/supervisor/round/:id/metrics',       handler: 'roundMetrics',    perm: 'supervisor.handover' },
     { method: 'POST', path: '/api/supervisor/round/:id/staffing',      handler: 'roundStaffing',   perm: 'supervisor.handover' },
     { method: 'POST', path: '/api/supervisor/round/:id/refresh-auto',  handler: 'roundRefreshAuto',perm: 'supervisor.handover' },
-    { method: 'GET',  path: '/api/supervisor/round/auto-metrics',      handler: 'roundAutoMetrics',perm: 'supervisor.view' }
+    { method: 'GET',  path: '/api/supervisor/round/auto-metrics',      handler: 'roundAutoMetrics',perm: 'supervisor.view' },
+    { method: 'POST', path: '/api/supervisor/round/:id/detail/:key',                  handler: 'roundAddDetail',    perm: 'supervisor.handover' },
+    { method: 'POST', path: '/api/supervisor/round/:id/detail/:key/:detailId',        handler: 'roundUpdateDetail', perm: 'supervisor.handover' },
+    { method: 'POST', path: '/api/supervisor/round/:id/detail/:key/:detailId/remove', handler: 'roundRemoveDetail', perm: 'supervisor.handover' },
+    { method: 'POST', path: '/api/supervisor/rounds', handler: 'roundCreate', perm: 'supervisor.handover' },
+    { method: 'POST', path: '/api/supervisor/rounds/:id/array/:array', handler: 'roundAddItem', perm: 'supervisor.handover' },
+    { method: 'POST', path: '/api/supervisor/rounds/:id/array/:array/:itemId/remove', handler: 'roundRemoveItem', perm: 'supervisor.handover' },
+    { method: 'POST', path: '/api/supervisor/rounds/:id/field/:field', handler: 'roundUpdateField', perm: 'supervisor.handover' },
+    { method: 'POST', path: '/api/supervisor/rounds/:id/submit', handler: 'roundSubmit', perm: 'supervisor.handover' },
+    { method: 'POST', path: '/api/supervisor/rounds/:id/sign', handler: 'roundSign', perm: 'supervisor.handover' },
+    { method: 'GET', path: '/api/supervisor/rounds/today', handler: 'roundListToday', perm: 'supervisor.view' },
+    { method: 'POST', path: '/api/supervisor/report', handler: 'reportCreate', perm: 'supervisor.handover' },
+    { method: 'POST', path: '/api/supervisor/report/:id', handler: 'reportUpdate', perm: 'supervisor.handover' },
+    { method: 'POST', path: '/api/supervisor/report/:id/array/:array', handler: 'reportAddItem', perm: 'supervisor.handover' },
+    { method: 'POST', path: '/api/supervisor/report/:id/array/:array/:itemId/remove', handler: 'reportRemoveItem', perm: 'supervisor.handover' },
+    { method: 'POST', path: '/api/supervisor/report/:id/array/:array/:itemId', handler: 'reportUpdateItem', perm: 'supervisor.handover' },
+    { method: 'POST', path: '/api/supervisor/report/:id/submit', handler: 'reportSubmit', perm: 'supervisor.handover' },
+    { method: 'POST', path: '/api/supervisor/report/:id/sign', handler: 'reportSign', perm: 'supervisor.handover' },
+    { method: 'GET', path: '/api/supervisor/report/today', handler: 'reportToday', perm: 'supervisor.view' },
+    { method: 'GET', path: '/api/supervisor/report/recent', handler: 'reportRecent', perm: 'supervisor.view' },
+    { method: 'POST', path: '/api/supervisor/round/:id/array/:array', handler: 'addDynamicItem', perm: 'supervisor.handover' },
+    { method: 'POST', path: '/api/supervisor/round/:id/array/:array/:itemId/remove', handler: 'removeDynamicItem', perm: 'supervisor.handover' },
+    { method: 'POST', path: '/api/supervisor/round/:id/array/:array/:itemId', handler: 'updateDynamicItem', perm: 'supervisor.handover' },
+    { method: 'POST', path: '/api/supervisor/round/:id/death', handler: 'addDeath', perm: 'supervisor.handover' },
+    { method: 'POST', path: '/api/supervisor/round/:id/death/:did/remove', handler: 'removeDeath', perm: 'supervisor.handover' },
+    { method: 'POST', path: '/api/supervisor/round/:id/icu-waiting', handler: 'addICUWaiting', perm: 'supervisor.handover' },
+    { method: 'POST', path: '/api/supervisor/round/:id/icu-waiting/:iid/remove', handler: 'removeICUWaiting', perm: 'supervisor.handover' }
   ],
   panels: [
     {

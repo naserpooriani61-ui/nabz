@@ -49,6 +49,8 @@ const P = {
   'kardex.order.execute': 'admin,nurse,nurse_aide,head_nurse',
   'kardex.mar.administer': 'admin,nurse',
   'ed.mar.administer': 'admin,nurse,head_nurse',
+  'ed.task.acknowledge': 'admin,nurse,head_nurse,intern,resident_1,resident_senior,attending,attending_consultant,supervisor',
+  'ed.task.resolve':     'admin,nurse,head_nurse,intern,resident_1,resident_senior,attending,attending_consultant,supervisor',
   'ed.mar.witness': 'admin,nurse,head_nurse',
   'ed.mar.hold': 'admin,nurse,head_nurse',
   'ed.mar.refuse': 'admin,nurse,head_nurse',

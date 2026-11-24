@@ -348,22 +348,85 @@ const handlers = {
     if (!mar) throw { code: 404, message: 'mar_not_found' };
     return { mar, events: (mar._trans || []).slice().reverse() };
   },
+  edConsultCreate: (ctx) => {
+    const b = ctx.body || {};
+    if (!b.patientId) throw { code: 400, message: 'patient_id_required' };
+    if (!b.targetService) throw { code: 400, message: 'target_service_required' };
+    if (!b.clinicalQuestion || b.clinicalQuestion.length < 5) throw { code: 400, message: 'clinical_question_min_5_chars' };
+    const cw = require('../core/domain/consult-writer');
+    const rec = cw.create(ctx, {
+      patientId: b.patientId,
+      visitId: b.visitId || null,
+      targetService: b.targetService,
+      question: b.clinicalQuestion,
+      urgency: b.urgency || 'routine',
+      requestedBy: (ctx.actor && (ctx.actor.fullName || ctx.actor.username)) || '—'
+    });
+    // Emit event for task dispatcher
+    try { require('../core/events').emit('ed.consult.requested', { consult: rec, actor: ctx.actor }); } catch (_) {}
+    return rec;
+  },
+  edPatientRegister: (ctx) => {
+    const b = ctx.body || {};
+    const name = String(b.name || '').trim();
+    if (!name || name.length < 2) throw { code: 400, message: 'name_required' };
+    const store = ctx.store || require('../core/store');
+    const uid = (p) => store.uid(p);
+    const now = new Date().toISOString();
+    const actor = ctx.actor || { id: 'unknown', role: 'unknown' };
+    const patientId = uid('pat');
+    const patient = {
+      id: patientId, name,
+      age: b.age != null ? parseInt(b.age, 10) : null,
+      sex: b.sex || null,
+      mrn: b.mrn || ('MRN-' + Date.now().toString(36).toUpperCase()),
+      phone: b.phone || null,
+      allergies: b.allergies ? String(b.allergies).split(',').map(s => s.trim()).filter(Boolean) : [],
+      bloodType: b.bloodType || null,
+      codeStatus: b.codeStatus || 'Full Code',
+      createdAt: now, createdBy: actor.id
+    };
+    store.put('patients', patient);
+    const visitId = uid('edv');
+    const visit = {
+      id: visitId, patientId, name,
+      age: patient.age, sex: patient.sex,
+      chiefComplaint: b.chiefComplaint || '—',
+      arrivalMode: b.arrivalMode || 'walk-in',
+      arrivalAt: now,
+      status: 'waiting_triage',
+      esiLevel: null, bedCode: null, zone: null,
+      createdAt: now, createdBy: actor.id,
+      _trans: [{ at: now, action: 'registered', by: actor.id }]
+    };
+    store.put('ed_visits', visit);
+    try { require('../core/events').emit('ed.visit.created', { visit, patient, actor }); } catch (_) {}
+    return { ok: true, patientId, visitId, patient, visit };
+  },
   edSaveVitals: (ctx) => {
     const b = ctx.body || {};
-    const id = b.visitId || b.patientId || '';
-    const v = h(ctx, 'ed_visits').find(x => x.id == id || x.patientId == id);
-    const pid = v ? (v.patientId || v.id) : id;
-    if (!pid) throw { code: 400, message: 'patient_required' };
+    const visitId = b.visitId;
+    const patientId = b.patientId;
+    if (!visitId && !patientId) throw { code: 400, message: 'visit_or_patient_required' };
+    let v = null;
+    if (visitId) v = h(ctx, 'ed_visits').find(x => x && x.id === visitId);
+    if (!v && patientId) v = h(ctx, 'ed_visits').find(x => x && (x.id === patientId || x.patientId === patientId));
+    const pid = (v && v.patientId) || patientId || (v && v.id) || visitId;
+    if (!pid) throw { code: 400, message: 'cannot_determine_patient' };
+    const vw = require('../core/domain/vitals-writer');
+    const rec = vw.record(ctx, {
+      patientId: pid,
+      visitId: visitId || (v && v.id) || null,
+      hr: b.hr, bp_sys: b.bp_sys || b.sbp, bp_dia: b.bp_dia || b.dbp,
+      rr: b.rr, spo2: b.spo2, temp: b.temp, gcs: b.gcs, pain: b.pain,
+      onOxygen: !!b.onOxygen, consciousness: b.consciousness
+    });
     try {
-      const vw = require('../core/domain/vitals-writer');
-      const fn = vw.record || vw.write || vw.create || vw.recordVitals;
-      if (typeof fn === 'function') {
-        return fn(ctx, { patientId: pid, hr: b.hr, bp_sys: b.bp_sys, bp_dia: b.bp_dia, rr: b.rr, spo2: b.spo2, temp: b.temp, gcs: b.gcs, pain: b.pain, onOxygen: !!b.onOxygen, consciousness: b.consciousness });
+      if (rec && (rec.newsLevel === 'critical' || (rec.news2 && rec.news2 >= 7))) {
+        require('../core/events').emit('ed.visit.news2.alert', { visit: v, news2: rec.news2, actor: ctx.actor });
       }
-      return { ok: true, stored: false, reason: 'no_writer_method' };
-    } catch (e) {
-      return { ok: true, stored: false, error: String(e && e.message || e) };
-    }
+    } catch (_) {}
+    return rec;
   },
   edMarAction: (ctx) => {
     const marId = ctx.params.id;
@@ -407,10 +470,16 @@ module.exports = {
     { method: 'POST', path: '/api/ed/mar/:id',  handler: 'edMarAction',   perm: 'ed.view' },
     { method: 'GET',  path: '/api/ed/mar/:id/events', handler: 'edMarEvents', perm: 'ed.view' },
   
+    { method: 'POST', path: '/api/ed/consults', handler: 'edConsultCreate', perm: 'ed.view' },
+    { method: 'POST', path: '/api/emergency/patients/register', handler: 'edPatientRegister', perm: 'ed.triage' },
   ],
   panels: [
     { id: 'ed_triage', module: 'emergency', title: 'تریاژ هوشمند', icon: '🩺', perm: 'ed.triage', kind: 'ed_triage' },
-    { id: 'ed_nursing', module: 'emergency', title: 'فضای کار پرستاری', icon: '💉', perm: 'ed.view', kind: 'ed_nursing' }
+    { id: 'ed_nursing', module: 'emergency', title: 'فضای کار پرستاری', icon: '💉', perm: 'ed.view', kind: 'ed_nursing' },
+    { id: 'ed_sbar', module: 'emergency', title: 'SBAR', icon: '📋', perm: 'ed.view', kind: 'ed_sbar' },
+    { id: 'ed_discharge', module: 'emergency', title: 'چک‌لیست ترخیص', icon: '📤', perm: 'ed.view', kind: 'ed_discharge' },
+    { id: 'ed_careplan', module: 'emergency', title: 'برنامه مراقبت', icon: '🩺', perm: 'ed.view', kind: 'ed_careplan' },
+    { id: 'ed_physician', module: 'emergency', title: 'فضای کار پزشک', icon: '👨‍⚕️', perm: 'ed.view', kind: 'ed_physician' }
   ]
 };
 
@@ -418,3 +487,129 @@ module.exports = {
 try { require('../core/domain/ed-api').extend(module.exports); } catch (e) { console.error('[ed-core] extend failed:', e && e.message); }
 // ── ED ops extension (28B): beds, bed assignment, patient creation, MCI ──
 try { require('../core/domain/ed-ops').extend(module.exports); } catch (e) { console.error('[ed-ops] extend failed:', e && e.message); }
+// ── Task dispatcher boot + visitTriage emit hook ────────────
+try {
+  const _bus = require('../core/events');
+  const _store = require('../core/store');
+  require('../core/domain/task-dispatcher').install(_bus, { store: _store, bus: _bus });
+  require('../core/domain/task-scheduler').start({ store: _store, bus: _bus });
+  // ── MAR generation on order verified ──
+  try {
+    const _mw = require('../core/domain/mar-writer');
+    const _mkCtx = (actor) => ({
+      store: _store, bus: _bus,
+      actor: actor || { id: 'system', role: 'system' },
+      now: () => new Date().toISOString(),
+      uid: (p) => _store.uid(p)
+    });
+    _bus.on('ed.order.cosigned', (p) => {
+      try {
+        const o = (p && p.order) || p;
+        if (o && o.status === 'verified' && typeof _mw.createFromOrder === 'function') {
+          _mw.createFromOrder(_mkCtx(p && p.actor), o);
+        }
+      } catch (e) { console.warn('[mar-hook cosigned]', e.message); }
+    });
+    _bus.on('ed.order.attending_cosigned', (p) => {
+      try {
+        const o = (p && p.order) || p;
+        if (o && o.status === 'verified' && typeof _mw.createFromOrder === 'function') {
+          _mw.createFromOrder(_mkCtx(p && p.actor), o);
+        }
+      } catch (e) { console.warn('[mar-hook attending]', e.message); }
+    });
+  } catch (e) { console.warn('[mar-hook boot]', e.message); }
+  if (module.exports.handlers && module.exports.handlers.visitTriage && !module.exports.handlers.visitTriage.__taskWrapped) {
+    const _origTriage = module.exports.handlers.visitTriage;
+    const _wrapped = (ctx) => {
+      const r = _origTriage(ctx);
+      try {
+        const v = (r && r.visit) ? r.visit : (r && r.id ? r : null);
+        if (v && v.esiLevel != null) {
+          try { _bus.emit('ed.visit.triaged', { visit: v, actor: ctx.actor }); } catch (_) {}
+        }
+      } catch (_) {}
+      return r;
+    };
+    _wrapped.__taskWrapped = true;
+    module.exports.handlers.visitTriage = _wrapped;
+  }
+} catch (e) {
+  console.warn('[emergency] task boot error:', e && e.message);
+}
+
+// _ed_extras_merged — force-load ed_extras routes/handlers (kernel may skip it)
+try {
+  const _extras = require('./ed_extras.js');
+  const _exRoutes = _extras.routes || [];
+  const _exHandlers = _extras.handlers || {};
+  let _added = 0;
+  _exRoutes.forEach(function(r) {
+    var exists = module.exports.routes.some(function(x) { return x.method === r.method && x.path === r.path; });
+    if (!exists) { module.exports.routes.push(r); _added++; }
+  });
+  Object.keys(_exHandlers).forEach(function(k) {
+    if (!module.exports.handlers[k]) module.exports.handlers[k] = _exHandlers[k];
+  });
+  console.log('[emergency] ed_extras merged: ' + _added + ' new routes');
+} catch (e) {
+  console.warn('[emergency] ed_extras merge failed:', e && e.message);
+}
+
+
+// _ed_nursing_report_merged — force-load nursing report routes + panel
+try {
+  const _nrep = require('./ed_nursing_report.js');
+  const _nrepRoutes = _nrep.routes || [];
+  const _nrepHandlers = _nrep.handlers || {};
+  const _nrepPanels = _nrep.panels || [];
+  let _nrepAdded = 0;
+  _nrepRoutes.forEach(function(r) {
+    var exists = module.exports.routes.some(function(x) { return x.method === r.method && x.path === r.path; });
+    if (!exists) { module.exports.routes.push(r); _nrepAdded++; }
+  });
+  Object.keys(_nrepHandlers).forEach(function(k) {
+    if (!module.exports.handlers[k]) module.exports.handlers[k] = _nrepHandlers[k];
+  });
+  _nrepPanels.forEach(function(p) {
+    var exists = module.exports.panels.some(function(x) { return x.id === p.id; });
+    if (!exists) module.exports.panels.push(p);
+  });
+  console.log('[emergency] ed_nursing_report merged: ' + _nrepAdded + ' new routes, ' + _nrepPanels.length + ' panel');
+} catch (e) {
+  console.warn('[emergency] ed_nursing_report merge failed:', e && e.message);
+}
+
+// _ed_tasks_merged — merge tasks routes
+try {
+  const _t = require('./ed_tasks.js');
+  let _n = 0;
+  (_t.routes || []).forEach(r => {
+    if (!module.exports.routes.some(x => x.method === r.method && x.path === r.path)) { module.exports.routes.push(r); _n++; }
+  });
+  Object.keys(_t.handlers || {}).forEach(k => { if (!module.exports.handlers[k]) module.exports.handlers[k] = _t.handlers[k]; });
+  (_t.panels || []).forEach(p => { if (!module.exports.panels.some(x => x.id === p.id)) module.exports.panels.push(p); });
+  console.log('[emergency] ed_tasks merged:', _n, 'routes');
+} catch(e) { console.warn('[emergency] ed_tasks merge failed:', e && e.message); }
+
+// _ed_orders_merged — merge order hierarchy routes
+try {
+  const _o = require('./ed_orders.js');
+  let _n = 0;
+  (_o.routes || []).forEach(r => {
+    if (!module.exports.routes.some(x => x.method === r.method && x.path === r.path)) { module.exports.routes.push(r); _n++; }
+  });
+  Object.keys(_o.handlers || {}).forEach(k => { if (!module.exports.handlers[k]) module.exports.handlers[k] = _o.handlers[k]; });
+  console.log('[emergency] ed_orders merged:', _n, 'routes');
+} catch(e) { console.warn('[emergency] ed_orders merge failed:', e && e.message); }
+
+// _ed_physician_merged — merge physician workspace routes
+try {
+  const _p = require('./ed_physician.js');
+  let _n = 0;
+  (_p.routes || []).forEach(r => {
+    if (!module.exports.routes.some(x => x.method === r.method && x.path === r.path)) { module.exports.routes.push(r); _n++; }
+  });
+  Object.keys(_p.handlers || {}).forEach(k => { if (!module.exports.handlers[k]) module.exports.handlers[k] = _p.handlers[k]; });
+  console.log('[emergency] ed_physician merged:', _n, 'routes');
+} catch(e) { console.warn('[emergency] ed_physician merge failed:', e && e.message); }

@@ -125,7 +125,9 @@
     const jumpDefs = [
       { route: 'ed/cc/board', icon: '🚨', label: 'CC',    cls: cur.startsWith('ed/cc') ? 'on' : '' },
       { route: 'ed/triage',   icon: '🩺', label: 'تریاژ', cls: cur.startsWith('ed/triage') ? 'on' : '' },
-      { route: 'ed/nursing',  icon: '💉', label: 'پرستاری', cls: cur.startsWith('ed/nursing') ? 'on' : '' }
+      { route: 'ed/nursing',  icon: '💉', label: 'پرستاری', cls: cur.startsWith('ed/nursing') ? 'on' : '' },
+      { route: 'ed/physician', icon: '👨‍⚕️', label: 'پزشک', cls: cur.startsWith('ed/physician') ? 'on' : '' },
+      { route: 'ed/tasks',    icon: '📋', label: 'کارتابل', cls: cur.startsWith('ed/tasks') ? 'on' : '' }
     ];
     jumpDefs.forEach(j => {
       const b = el('button', {

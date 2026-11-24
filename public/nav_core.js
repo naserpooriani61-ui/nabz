@@ -20,6 +20,16 @@
     'ed/triage/v':     { kind: 'ed_triage',       title: 'تریاژ بیمار',      icon: '🩺', patient: true },
     'ed/nursing':      { kind: 'ed_nursing',      title: 'صف پرستاری',       icon: '💉' },
     'ed/nursing/v':    { kind: 'ed_nursing',      title: 'فضای کار پرستاری', icon: '💉', patient: true },
+    'ed/physician':   { kind: 'ed_physician',   title: 'فضای کار پزشک',   icon: '👨‍⚕️' },
+        'ed/sbar':        { kind: 'ed_sbar',        title: 'SBAR',            icon: '📋' },
+    'ed/sbar/v':      { kind: 'ed_sbar',        title: 'SBAR بیمار',      icon: '📋', patient: true },
+    'ed/discharge':   { kind: 'ed_discharge',   title: 'چک‌لیست ترخیص',   icon: '📤' },
+    'ed/discharge/v': { kind: 'ed_discharge',   title: 'ترخیص بیمار',     icon: '📤', patient: true },
+    'ed/careplan':    { kind: 'ed_careplan',    title: 'برنامه مراقبت',   icon: '🩺' },
+    'ed/careplan/v':  { kind: 'ed_careplan',    title: 'مراقبت بیمار',    icon: '🩺', patient: true },
+    'ed/physician/v': { kind: 'ed_physician',   title: 'فضای کار بیمار', icon: '👨‍⚕️', patient: true },
+    'ed/tasks':        { kind: 'ed_tasks',        title: 'کارتابل من',       icon: '📋' },
+        'ed/report': { kind: 'ed_nursing_report', title: 'گزارش پرستاری', icon: '📊' },
     'ed/patients':     { kind: null,              title: 'پرونده‌ها',        icon: '👤' }
   };
 

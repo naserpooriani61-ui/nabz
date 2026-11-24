@@ -94,6 +94,34 @@ function getOverview(ctx) {
 }
 
 // ─── ۲) wards: per-ward breakdown ───
+// ─── Ward taxonomy mapping (sub-ward → parent) ───
+const WARD_PARENT = {
+  INT_M: 'INT', INT_F: 'INT',
+  ICU_GEN1: 'ICU_GEN', ICU_GEN2: 'ICU_GEN',
+  NEURO_M: 'NEURO', NEURO_F: 'NEURO',
+  ONCO: 'HEM_ONC',
+  GEN_SURG14: 'SURG_GEN', GEN_SURG2: 'SURG_GEN',
+  ORTHO_F: 'ORTHO', ORTHO_M: 'ORTHO',
+  NSURG_F: 'NSURG', NSURG_M: 'NSURG'
+};
+const WARD_LABEL = {
+  CARD:'قلب', CCU:'CCU', DIAL:'دیالیز', ENDO:'آندوسکوپی', ER:'اورژانس',
+  GI:'گوارش', HEM_ONC:'هماتو/آنکو', ICU_ER:'ICU اورژانس', ICU_GEN:'ICU جنرال',
+  ICU_NEURO:'ICU اعصاب', ICU_RESP:'ICU ریه', INF:'عفونی', INT:'داخلی', MS:'MS',
+  NEPH:'نفرولوژی', NEURO:'نورولوژی', NSURG:'جراحی اعصاب', ORTHO:'ارتوپدی',
+  PULM:'ریه', RHEUM:'روماتولوژی', SURG_GEN:'جراحی عمومی', TX_KIDNEY:'پیوند کلیه',
+  URO:'اورولوژی', VASC:'عروق', VIP:'VIP',
+  GEN_SURG14:'جراحی عمومی ۱۴', GEN_SURG2:'جراحی عمومی ۲',
+  ICU_GEN1:'ICU جنرال ۱', ICU_GEN2:'ICU جنرال ۲',
+  INT_M:'داخلی مردان', INT_F:'داخلی زنان',
+  NEURO_M:'نورولوژی مردان', NEURO_F:'نورولوژی زنان',
+  ORTHO_M:'ارتوپدی مردان', ORTHO_F:'ارتوپدی زنان',
+  NSURG_M:'جراحی اعصاب مردان', NSURG_F:'جراحی اعصاب زنان',
+  ONCO:'آنکولوژی'
+};
+function _resolveWard(code) { return code ? (WARD_PARENT[code] || code) : '?'; }
+function _wardLabel(code) { return WARD_LABEL[code] || code; }
+
 function getWards(ctx) {
   const beds = _all(ctx, 'beds');
   const patients = _all(ctx, 'patients');
@@ -101,52 +129,64 @@ function getWards(ctx) {
   const isolations = _all(ctx, 'isolations');
 
   const byWard = {};
-  beds.forEach(b => {
-    const w = b.wardCode || '?';
-    if (!byWard[w]) byWard[w] = {
-      code: w, label: _wardLabel(b),
+  function _ensure(code) {
+    const parent = _resolveWard(code);
+    if (!byWard[parent]) byWard[parent] = {
+      code: parent, label: _wardLabel(parent),
       total: 0, occupied: 0, empty: 0, cleaning: 0,
-      vent: 0, isolation: 0, critical: 0
+      patients: 0, vent: 0, isolation: 0, critical: 0, subWards: {}
     };
-    byWard[w].total++;
-    if (b.status === 'occupied') byWard[w].occupied++;
-    else if (b.status === 'available' || b.status === 'empty') byWard[w].empty++;
-    else if (b.status === 'cleaning') byWard[w].cleaning++;
-    if (b.isCritical) byWard[w].critical++;
+    return { parent, obj: byWard[parent] };
+  }
+
+  beds.forEach(b => {
+    if (!b.wardCode) return;
+    const e = _ensure(b.wardCode);
+    e.obj.total++;
+    if (b.status === 'occupied') e.obj.occupied++;
+    else if (b.status === 'available' || b.status === 'empty') e.obj.empty++;
+    else if (b.status === 'cleaning') e.obj.cleaning++;
+    if (b.isCritical) e.obj.critical++;
   });
 
-  // vent count per ward
-  const ventByWard = {};
+  patients.filter(p => p.status !== 'discharged' && p.status !== 'transferred').forEach(p => {
+    if (!p.wardCode) return;
+    const e = _ensure(p.wardCode);
+    e.obj.patients++;
+    if (p.wardCode !== e.parent) e.obj.subWards[p.wardCode] = (e.obj.subWards[p.wardCode] || 0) + 1;
+  });
+
   vents.forEach(v => {
-    if (v.status === 'active' || v.on) {
-      const w = v.wardCode || '?';
-      ventByWard[w] = (ventByWard[w] || 0) + 1;
+    if (v.status === 'active' || v.on === true) {
+      const e = _ensure(v.wardCode);
+      e.obj.vent++;
     }
   });
-  Object.keys(byWard).forEach(w => { byWard[w].vent = ventByWard[w] || 0; });
 
-  // isolation per ward
-  const isoByWard = {};
   isolations.forEach(i => {
     if (i.status === 'active' || i.active) {
-      const w = i.wardCode || '?';
-      isoByWard[w] = (isoByWard[w] || 0) + 1;
+      const e = _ensure(i.wardCode);
+      e.obj.isolation++;
     }
   });
-  Object.keys(byWard).forEach(w => { byWard[w].isolation = isoByWard[w] || 0; });
+
+  const list = Object.values(byWard)
+    .filter(w => w.total > 0 || w.patients > 0)
+    .sort((a, b) => a.code.localeCompare(b.code));
 
   return {
     generatedAt: new Date().toISOString(),
-    wards: Object.values(byWard).sort((a, b) => a.code.localeCompare(b.code)),
+    wards: list,
     totals: {
+      wards: list.length,
       beds: beds.length,
       occupied: beds.filter(b => b.status === 'occupied').length,
-      empty: beds.filter(b => b.status === 'available' || b.status === 'empty').length
+      empty: beds.filter(b => b.status === 'available' || b.status === 'empty').length,
+      patients: patients.filter(p => p.status !== 'discharged' && p.status !== 'transferred').length
     }
   };
 }
 
-// ─── ۳) emergency: ED stats ───
 function getEmergency(ctx) {
   let edBoard = null;
   try {

@@ -2,8 +2,99 @@
 // core/domain/ward-round-writer.js — v2 (metrics + staffing)
 
 const COLL = 'ward_rounds';
+const LEGACY_COLL = 'supervisor_rounds'; // legacy rounds from earlier version
 const CATEGORIES = ['staffing', 'equipment', 'infection', 'safety', 'medication', 'beds', 'other'];
 const SEVERITIES = ['info', 'warning', 'critical'];
+
+// ─── Detail schemas (14 types, each with own fields) ───
+const DETAIL_SCHEMAS = {
+  isolated: { label: 'ایزوله', icon: '🔒', fields: [
+    { key: 'name', label: 'نام بیمار', type: 'text', req: true, w: 'full' },
+    { key: 'mrn', label: 'MRN', type: 'text', w: 'half' },
+    { key: 'isolationType', label: 'نوع ایزولاسیون', type: 'select', options: ['تماسی','قطره‌ای','هوایی','معکوس'], w: 'half' },
+    { key: 'startDate', label: 'تاریخ شروع', type: 'date', w: 'half' }
+  ]},
+  ventilated: { label: 'تحت ونتیلاتور', icon: '🫁', fields: [
+    { key: 'name', label: 'نام بیمار', type: 'text', req: true, w: 'full' },
+    { key: 'ventilatorNo', label: 'شماره ونتیلاتور', type: 'text', w: 'half' },
+    { key: 'intubationDate', label: 'تاریخ اینتوباسیون', type: 'date', w: 'half' }
+  ]},
+  highRisk: { label: 'بیمار پرخطر', icon: '⚠️', fields: [
+    { key: 'name', label: 'نام بیمار', type: 'text', req: true, w: 'full' },
+    { key: 'riskType', label: 'نوع خطر', type: 'select', options: ['سقوط','زخم فشاری','خودکشی','تشنج','سوءتغذیه','سایر'], w: 'half' },
+    { key: 'notes', label: 'یادداشت', type: 'text', w: 'half' }
+  ]},
+  icuWaiting: { label: 'منتظر ICU', icon: '🏥', fields: [
+    { key: 'name', label: 'نام بیمار', type: 'text', req: true, w: 'full' },
+    { key: 'fromWard', label: 'از بخش', type: 'text', w: 'half' },
+    { key: 'targetIcu', label: 'ICU مقصد', type: 'text', w: 'half' },
+    { key: 'waitingSince', label: 'از ساعت', type: 'time', w: 'half' }
+  ]},
+  transfusion: { label: 'ترانسفوزیون', icon: '🩸', fields: [
+    { key: 'name', label: 'نام بیمار', type: 'text', req: true, w: 'full' },
+    { key: 'mrn', label: 'MRN', type: 'text', w: 'half' },
+    { key: 'productType', label: 'فرآورده', type: 'select', options: ['PRBC','FFP','Platelet','Cryo'], w: 'half' },
+    { key: 'units', label: 'تعداد واحد', type: 'number', w: 'half' },
+    { key: 'startTime', label: 'ساعت شروع', type: 'time', w: 'half' },
+    { key: 'endTime', label: 'ساعت پایان', type: 'time', w: 'half' },
+    { key: 'reaction', label: 'واکنش', type: 'select', options: ['ندارد','خفیف','شدید'], w: 'half' }
+  ]},
+  waitingSurgery: { label: 'منتظر عمل', icon: '🔪', fields: [
+    { key: 'name', label: 'نام بیمار', type: 'text', req: true, w: 'full' },
+    { key: 'surgeryType', label: 'نوع عمل', type: 'text', w: 'full' },
+    { key: 'surgeon', label: 'جراح', type: 'text', w: 'half' },
+    { key: 'plannedDate', label: 'تاریخ برنامه', type: 'date', w: 'half' },
+    { key: 'delayReason', label: 'علت تأخیر', type: 'text', w: 'full' }
+  ]},
+  cancelledSurgery: { label: 'کنسلی عمل', icon: '❌', fields: [
+    { key: 'name', label: 'نام بیمار', type: 'text', req: true, w: 'full' },
+    { key: 'surgeryType', label: 'نوع عمل', type: 'text', w: 'half' },
+    { key: 'reason', label: 'دلیل کنسلی', type: 'text', w: 'half' }
+  ]},
+  dialysis: { label: 'دیالیز', icon: '💧', fields: [
+    { key: 'name', label: 'نام بیمار', type: 'text', req: true, w: 'full' },
+    { key: 'dialysisType', label: 'نوع', type: 'select', options: ['HD','CRRT','PD'], w: 'half' },
+    { key: 'session', label: 'نوبت', type: 'text', w: 'half' },
+    { key: 'machine', label: 'دستگاه', type: 'text', w: 'half' },
+    { key: 'time', label: 'ساعت', type: 'time', w: 'half' }
+  ]},
+  markerPositive: { label: 'مارکر مثبت', icon: '🧬', fields: [
+    { key: 'name', label: 'نام بیمار', type: 'text', req: true, w: 'full' },
+    { key: 'markerType', label: 'نوع مارکر', type: 'select', options: ['HBsAg','HCV','HIV','Other'], w: 'half' },
+    { key: 'isolated', label: 'ایزوله شد؟', type: 'select', options: ['بله','خیر'], w: 'half' }
+  ]},
+  febrile: { label: 'تبدار', icon: '🌡', fields: [
+    { key: 'name', label: 'نام بیمار', type: 'text', req: true, w: 'full' },
+    { key: 'temp', label: 'دما (°C)', type: 'number', w: 'half' },
+    { key: 'suspectedCause', label: 'علت مشکوک', type: 'text', w: 'half' }
+  ]},
+  newAdmissions: { label: 'پذیرش جدید', icon: '🆕', fields: [
+    { key: 'name', label: 'نام بیمار', type: 'text', req: true, w: 'full' },
+    { key: 'source', label: 'منبع', type: 'select', options: ['اورژانس','درمانگاه','انتقالی','الکتیو'], w: 'half' },
+    { key: 'diagnosis', label: 'تشخیص', type: 'text', w: 'half' }
+  ]},
+  transfers: { label: 'انتقالی', icon: '🔄', fields: [
+    { key: 'name', label: 'نام بیمار', type: 'text', req: true, w: 'full' },
+    { key: 'from', label: 'از بخش', type: 'text', w: 'half' },
+    { key: 'to', label: 'به بخش', type: 'text', w: 'half' },
+    { key: 'reason', label: 'علت', type: 'text', w: 'full' }
+  ]},
+  pendingDischarge: { label: 'ترخیص نرفته', icon: '📤', fields: [
+    { key: 'name', label: 'نام بیمار', type: 'text', req: true, w: 'full' },
+    { key: 'delayReason', label: 'علت تأخیر', type: 'text', w: 'half' },
+    { key: 'plan', label: 'برنامه', type: 'text', w: 'half' }
+  ]},
+  deaths: { label: 'فوتی', icon: '⚰️', fields: [
+    { key: 'name', label: 'نام بیمار', type: 'text', req: true, w: 'full' },
+    { key: 'mrn', label: 'MRN', type: 'text', w: 'half' },
+    { key: 'cprTime', label: 'ساعت CPR', type: 'time', w: 'half' },
+    { key: 'deathTime', label: 'ساعت فوت', type: 'time', w: 'half' },
+    { key: 'cause', label: 'علت', type: 'text', w: 'half' },
+    { key: 'certIssued', label: 'گواهی صادر شد؟', type: 'select', options: ['بله','خیر'], w: 'half' },
+    { key: 'code99', label: 'کد ۹۹؟', type: 'select', options: ['بله','خیر'], w: 'half' }
+  ]}
+};
+const DETAIL_KEYS = Object.keys(DETAIL_SCHEMAS);
 
 const METRIC_KEYS = [
   'patientsTotal', 'bedsOccupied', 'bedsEmpty', 'ventilated', 'isolated',
@@ -22,6 +113,24 @@ const _err   = (ctx, code) => {
   return Object.assign(new Error(code), { code });
 };
 const _all = (ctx, c) => { try { const r = _store(ctx).readAll(c); return Array.isArray(r) ? r : []; } catch (_) { return []; } };
+
+function _findRound(ctx, id) {
+  try {
+    const direct = _store(ctx).get(COLL, id);
+    if (direct) return direct;
+  } catch (_) {}
+  const all = _all(ctx, COLL);
+  const found = all.find(x => x.id === id);
+  if (found) return found;
+  const legacy = _all(ctx, LEGACY_COLL);
+  const inLegacy = legacy.find(x => x.id === id);
+  if (inLegacy) {
+    console.log('[ward-round-writer] round found in LEGACY supervisor_rounds:', id);
+    return inLegacy;
+  }
+  console.error('[ward-round-writer] round NOT found:', id, '| primary:', all.length, '| legacy:', legacy.length);
+  return null;
+}
 
 function _todayISO() { return new Date().toISOString().slice(0, 10); }
 function _actorName(a) { return (a && (a.fullName || a.username)) || ''; }
@@ -123,7 +232,7 @@ function create(ctx, raw) {
 // ── Update metrics (manual + override auto) ──
 function updateMetrics(ctx, id, payload) {
   const store = _store(ctx);
-  const r = store.get(COLL, id);
+  const r = _findRound(ctx, id);
   if (!r) throw _err(ctx, 'not_found');
   if (r.status !== 'draft') throw _err(ctx, 'round_locked');
   const p = payload || {};
@@ -144,7 +253,7 @@ function updateMetrics(ctx, id, payload) {
 // ── Update staffing ──
 function updateStaffing(ctx, id, payload) {
   const store = _store(ctx);
-  const r = store.get(COLL, id);
+  const r = _findRound(ctx, id);
   if (!r) throw _err(ctx, 'not_found');
   if (r.status !== 'draft') throw _err(ctx, 'round_locked');
   const p = payload || {};
@@ -167,7 +276,7 @@ function updateStaffing(ctx, id, payload) {
 // ── Refresh auto metrics ──
 function refreshAutoMetrics(ctx, id) {
   const store = _store(ctx);
-  const r = store.get(COLL, id);
+  const r = _findRound(ctx, id);
   if (!r) throw _err(ctx, 'not_found');
   if (r.status !== 'draft') throw _err(ctx, 'round_locked');
   const auto = getAutoMetrics(ctx, r.wardCode);
@@ -181,7 +290,7 @@ function refreshAutoMetrics(ctx, id) {
 function updateChecklist(ctx, id, category, payload) {
   if (CATEGORIES.indexOf(category) === -1) throw _err(ctx, 'invalid_category');
   const store = _store(ctx);
-  const r = store.get(COLL, id);
+  const r = _findRound(ctx, id);
   if (!r) throw _err(ctx, 'not_found');
   if (r.status !== 'draft') throw _err(ctx, 'round_locked');
   const st = (payload && payload.status) || 'na';
@@ -196,7 +305,7 @@ function updateChecklist(ctx, id, category, payload) {
 // ── Findings ──
 function addFinding(ctx, id, payload) {
   const store = _store(ctx);
-  const r = store.get(COLL, id);
+  const r = _findRound(ctx, id);
   if (!r) throw _err(ctx, 'not_found');
   if (r.status !== 'draft') throw _err(ctx, 'round_locked');
   const p = payload || {};
@@ -219,7 +328,7 @@ function addFinding(ctx, id, payload) {
 
 function removeFinding(ctx, id, fid) {
   const store = _store(ctx);
-  const r = store.get(COLL, id);
+  const r = _findRound(ctx, id);
   if (!r) throw _err(ctx, 'not_found');
   if (r.status !== 'draft') throw _err(ctx, 'round_locked');
   r.findings = (r.findings || []).filter(f => f.id !== fid);
@@ -230,7 +339,7 @@ function removeFinding(ctx, id, fid) {
 // ── Final notes / Submit / Sign ──
 function setFinalNotes(ctx, id, text) {
   const store = _store(ctx);
-  const r = store.get(COLL, id);
+  const r = _findRound(ctx, id);
   if (!r) throw _err(ctx, 'not_found');
   if (r.status !== 'draft') throw _err(ctx, 'round_locked');
   r.finalNotes = String(text || '').slice(0, 2000);
@@ -241,7 +350,7 @@ function setFinalNotes(ctx, id, text) {
 
 function submit(ctx, id) {
   const store = _store(ctx);
-  const r = store.get(COLL, id);
+  const r = _findRound(ctx, id);
   if (!r) throw _err(ctx, 'not_found');
   if (r.status !== 'draft') throw _err(ctx, 'already_submitted');
   r.status = 'submitted';
@@ -254,7 +363,7 @@ function submit(ctx, id) {
 
 function sign(ctx, id) {
   const store = _store(ctx);
-  const r = store.get(COLL, id);
+  const r = _findRound(ctx, id);
   if (!r) throw _err(ctx, 'not_found');
   if (r.status !== 'submitted') throw _err(ctx, 'not_submitted');
   r.status = 'signed';
@@ -333,9 +442,74 @@ function getStats(ctx, days) {
   };
 }
 
+// ─── Detail CRUD ───
+function _ensureDetails(rec) {
+  rec.details = rec.details || {};
+  DETAIL_KEYS.forEach(k => { if (!Array.isArray(rec.details[k])) rec.details[k] = []; });
+}
+
+function _syncMetrics(rec) {
+  _ensureDetails(rec);
+  rec.metrics = rec.metrics || {};
+  DETAIL_KEYS.forEach(k => { rec.metrics[k] = (rec.details[k] || []).length; });
+}
+
+function addDetail(ctx, id, key, payload) {
+  if (DETAIL_KEYS.indexOf(key) === -1) throw _err(ctx, 'invalid_detail_key');
+  const store = _store(ctx);
+  const r = _findRound(ctx, id);
+  if (!r) throw _err(ctx, 'not_found');
+  if (r.status !== 'draft') throw _err(ctx, 'round_locked');
+  _ensureDetails(r);
+  const rec = Object.assign({ _id: _uid(ctx, 'dtl'), _at: _now(ctx), _by: ctx.actor && ctx.actor.id }, payload || {});
+  r.details[key].push(rec);
+  _syncMetrics(r);
+  store.put(COLL, r);
+  return r;
+}
+
+function updateDetail(ctx, id, key, detailId, payload) {
+  if (DETAIL_KEYS.indexOf(key) === -1) throw _err(ctx, 'invalid_detail_key');
+  const store = _store(ctx);
+  const r = _findRound(ctx, id);
+  if (!r) throw _err(ctx, 'not_found');
+  if (r.status !== 'draft') throw _err(ctx, 'round_locked');
+  _ensureDetails(r);
+  const idx = r.details[key].findIndex(d => d._id === detailId);
+  if (idx === -1) throw _err(ctx, 'detail_not_found');
+  const p = payload || {};
+  DETAIL_SCHEMAS[key].fields.forEach(f => {
+    if (p[f.key] !== undefined) {
+      if (f.type === 'number') {
+        const n = Number(p[f.key]);
+        if (isFinite(n)) r.details[key][idx][f.key] = n;
+      } else {
+        r.details[key][idx][f.key] = String(p[f.key] || '').slice(0, 500);
+      }
+    }
+  });
+  r.details[key][idx]._at = _now(ctx);
+  store.put(COLL, r);
+  return r;
+}
+
+function removeDetail(ctx, id, key, detailId) {
+  if (DETAIL_KEYS.indexOf(key) === -1) throw _err(ctx, 'invalid_detail_key');
+  const store = _store(ctx);
+  const r = _findRound(ctx, id);
+  if (!r) throw _err(ctx, 'not_found');
+  if (r.status !== 'draft') throw _err(ctx, 'round_locked');
+  _ensureDetails(r);
+  r.details[key] = r.details[key].filter(d => d._id !== detailId);
+  _syncMetrics(r);
+  store.put(COLL, r);
+  return r;
+}
+
 module.exports = {
-  COLL, CATEGORIES, SEVERITIES, METRIC_KEYS, AUTO_METRICS,
+  COLL, CATEGORIES, SEVERITIES, METRIC_KEYS, AUTO_METRICS, DETAIL_SCHEMAS, DETAIL_KEYS,
   create, updateMetrics, updateStaffing, refreshAutoMetrics, getAutoMetrics,
   updateChecklist, addFinding, removeFinding, setFinalNotes,
-  submit, sign, listToday, getCoverage, getStats
+  submit, sign, listToday, getCoverage, getStats,
+  addDetail, updateDetail, removeDetail
 };
