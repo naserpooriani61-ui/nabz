@@ -117,7 +117,8 @@
 
   function renderApp() {
     var h = '<div class="sup-wrap">';
-    h += '<div class="sup-hd"><div class="sup-hd-t">🏛️ داشبورد سوپروایزر</div>';
+h += '<div class="sup-hd"><div class="sup-hd-t">🏛️ داشبورد سوپروایزر</div>';
+    h += '<button class="sup-hd-b" onclick="NABZ.show(\'supervisor.supervisor_report\')" title="گزارش رسمی" style="background:linear-gradient(135deg,#10b981,#059669)">📋 گزارش</button>';
     h += '<button class="sup-hd-b" onclick="NABZ._supRefresh()">⟳</button></div>';
     h += '<div class="sup-tabs">';
     [['overview','📊 نمای کلی'],['wards','🏥 بخش‌ها'],['round','🏛️ راند'],
@@ -551,6 +552,7 @@
   }
 
 
+  NABZ._supOpenReport = function() { NABZ.show('supervisor.supervisor_report'); };
   NABZ._supRefresh = function() { state.activeRound = null; show(); };
   NABZ._supTab = function(t) {
     if (t.indexOf('_soon_') === 0) { toast('🔒 فاز بعدی'); return; }

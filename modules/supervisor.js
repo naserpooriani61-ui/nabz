@@ -8,7 +8,7 @@ const SupRounds = require('../core/domain/supervisor-rounds');
 const SR = require('../core/domain/supervisor-report-writer');
 
 // ─── permissions ───
-const SUP_VIEW_ROLES = 'admin,hospital_director,medical_director,nursing_director,supervisor_senior,supervisor_clinical,quality_officer,head_nurse,matron';
+const SUP_VIEW_ROLES = 'admin,hospital_director,medical_director,nursing_director,supervisor,supervisor_senior,supervisor_clinical,supervisor_er,quality_officer,head_nurse,matron,nurse,receptionist,anesthesiologist';
 if (!perms.P['supervisor.view']) perms.P['supervisor.view'] = SUP_VIEW_ROLES;
 if (!perms.P['supervisor.handover']) perms.P['supervisor.handover'] = 'admin,nursing_director,supervisor_senior,supervisor_clinical,head_nurse';
 
@@ -65,6 +65,22 @@ const handlers = {
   reportSign: (ctx) => SupRounds.sign(ctx, ctx.params.id),
   reportToday: (ctx) => SupRounds.listToday(ctx),
   reportRecent: (ctx) => SR.listRecent(ctx, ctx.query && ctx.query.days),
+  reportAutoPopulate: (ctx) => WR.autoPopulate(ctx),
+  reportApplyAuto: (ctx) => {
+    const store = require('../core/store');
+    const r = store.get(WR.COLL, ctx.params.id);
+    if (!r) throw ctx.E.notFound('not_found');
+    if (r.status !== 'draft') throw ctx.E.conflict('not_draft');
+    const auto = WR.autoPopulate(ctx);
+    Object.keys(auto).forEach(k => {
+      if (Array.isArray(auto[k])) { r[k] = auto[k]; }
+      else if (auto[k] !== null && auto[k] !== '') { r[k] = auto[k]; }
+    });
+    r._autoPopulatedAt = new Date().toISOString();
+    r._autoPopulatedBy = ctx.actor && ctx.actor.id;
+    store.put(WR.COLL, r);
+    return r;
+  },
   addDynamicItem: (ctx) => WR.addDynamicItem(ctx, ctx.params.id, ctx.params.array, ctx.body || {}),
   removeDynamicItem: (ctx) => WR.removeDynamicItem(ctx, ctx.params.id, ctx.params.array, ctx.params.itemId),
   updateDynamicItem: (ctx) => WR.updateDynamicItem(ctx, ctx.params.id, ctx.params.array, ctx.params.itemId, ctx.body || {}),
@@ -126,6 +142,8 @@ module.exports = {
     { method: 'POST', path: '/api/supervisor/report/:id/submit', handler: 'reportSubmit', perm: 'supervisor.handover' },
     { method: 'POST', path: '/api/supervisor/report/:id/sign', handler: 'reportSign', perm: 'supervisor.handover' },
     { method: 'GET', path: '/api/supervisor/report/today', handler: 'reportToday', perm: 'supervisor.view' },
+    { method: 'GET',  path: '/api/supervisor/report/auto-populate',   handler: 'reportAutoPopulate', perm: 'supervisor.view' },
+    { method: 'POST', path: '/api/supervisor/report/:id/apply-auto', handler: 'reportApplyAuto',    perm: 'supervisor.handover' },
     { method: 'GET', path: '/api/supervisor/report/recent', handler: 'reportRecent', perm: 'supervisor.view' },
     { method: 'POST', path: '/api/supervisor/round/:id/array/:array', handler: 'addDynamicItem', perm: 'supervisor.handover' },
     { method: 'POST', path: '/api/supervisor/round/:id/array/:array/:itemId/remove', handler: 'removeDynamicItem', perm: 'supervisor.handover' },
@@ -143,6 +161,14 @@ module.exports = {
       perm: 'supervisor.view',
       kind: 'supervisor_dashboard',
       api: '/api/supervisor/board'
+    },
+    {
+      id: 'supervisor_report',
+      title: '📋 گزارش رسمی سوپروایزر',
+      icon: '📋',
+      perm: 'supervisor.view',
+      kind: 'supervisor_report',
+      api: '/api/supervisor/report/today'
     }
   ]
 };

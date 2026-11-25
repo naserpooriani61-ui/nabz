@@ -118,4 +118,86 @@ function listRecent(ctx, days) {
   return { items: _all(ctx, COLL).filter(r => { const t = Date.parse(r.date + 'T00:00:00Z'); return isFinite(t) && t >= since; }) };
 }
 
-module.exports = { COLL, create, update, addDynamicItem, removeDynamicItem, updateDynamicItem, submit, sign, listToday, listRecent };
+function _shiftNow() { const h = new Date().getHours(); return h >= 7 && h < 15 ? 'morning' : h >= 15 && h < 23 ? 'evening' : 'night'; }
+
+function autoPopulate(ctx) {
+  const beds = _all(ctx, 'beds');
+  const patients = _all(ctx, 'patients');
+  const vents = _all(ctx, 'ventilator_settings');
+  const isolations = _all(ctx, 'isolations');
+  const edVisits = _all(ctx, 'ed_visits');
+  const edCodes = _all(ctx, 'ed_codes');
+  const incidents = _all(ctx, 'incidents');
+  const risks = _all(ctx, 'risks');
+  const orders = _all(ctx, 'orders');
+  const today = _todayISO();
+  const actor = ctx.actor || {};
+  const active = patients.filter(p => p.status !== 'discharged' && p.status !== 'transferred');
+  const todayCodes = edCodes.filter(c => (c.activatedAt || '').startsWith(today));
+  const todayIncidents = incidents.filter(i => (i.reportedAt || '').startsWith(today));
+
+  const intubated = vents.filter(v => v.status === 'active' || v.on === true).map(v => {
+    const pt = active.find(x => x.id === v.patientId);
+    return {
+      name: (pt ? ((pt.firstName || '') + ' ' + (pt.lastName || '')).trim() : v.patientName) || '—',
+      ward: v.wardCode, ventNo: v.deviceId || v.ventilatorNo || '—',
+      intubationDate: (v.startedAt || v.createdAt || '').slice(0, 10),
+      readyForWeaning: v.weaningStatus || 'در بررسی'
+    };
+  });
+  const icuWaiting = edVisits.filter(v => v.status === 'boarding' || v.dispositionType === 'admit').map(v => ({
+    name: v.patientName || '—', ward: v.wardCode || 'ER',
+    since: (v.statusSince || '').slice(11, 16), currentBed: v.bedNumber || '—'
+  }));
+  const specialCare = orders.filter(o => o.type === 'paraclinical' && /dialysis|پلاسما|آندو|sleep/i.test(JSON.stringify(o.details || {}))).map(o => ({
+    name: o.patientName || '—', careType: (o.details && (o.details.panel || o.details.note)) || 'other',
+    ward: o.wardCode, time: (o.orderedAt || '').slice(11, 16)
+  }));
+
+  const fallRisk = risks.filter(r => String(r.category || '').toLowerCase().indexOf('fall') >= 0).map(r => ({
+    name: r.patientName || '—', ward: r.wardCode, morseScore: r.riskScore || 0, interventions: (r.mitigations || []).join('، ')
+  }));
+  const pressureUlcer = risks.filter(r => String(r.category || '').toLowerCase().indexOf('pressure') >= 0).map(r => ({
+    name: r.patientName || '—', ward: r.wardCode, bradenScore: r.riskScore || 0, stage: r.stage || '—', interventions: (r.mitigations || []).join('، ')
+  }));
+  const suicideRisk = risks.filter(r => String(r.category || '').toLowerCase().indexOf('suicide') >= 0).map(r => ({
+    name: r.patientName || '—', ward: r.wardCode, assessment: r.title || '—', precautions: (r.mitigations || []).join('، ')
+  }));
+
+  const unexpectedEvents = todayIncidents.filter(i => ['major','critical','sentinel'].indexOf(i.severity) >= 0).map(i => ({
+    type: i.category || '—', severity: i.severity, ward: i.wardCode || '—', description: (i.description || '').slice(0, 200), actions: ''
+  }));
+  const nearMisses = todayIncidents.filter(i => ['minor','moderate'].indexOf(i.severity) >= 0).map(i => ({
+    type: i.category || '—', ward: i.wardCode || '—', description: (i.description || '').slice(0, 200), actions: ''
+  }));
+
+  const covidConfirmed = isolations.filter(i => /covid/i.test(i.reason || i.type || '') && (i.status === 'active' || i.active)).map(i => ({
+    name: i.patientName || '—', ward: i.wardCode, swabDate: (i.startDate || i.createdAt || '').slice(0, 10), pcrCt: i.pcrCt || '—'
+  }));
+
+  const availableVents = beds.filter(b => (b.wardCode || '').indexOf('ICU_') === 0 && (b.status === 'available' || b.status === 'empty')).length;
+
+  return {
+    date: today,
+    shiftType: _shiftNow(),
+    supervisorName: actor.fullName || actor.username || '',
+    intubated: intubated,
+    icuWaiting: icuWaiting,
+    needsSpecialCare: specialCare,
+    code99Count: todayCodes.filter(c => c.code === '99').length,
+    code247Count: todayCodes.filter(c => c.code === '247').length,
+    code724Count: todayCodes.filter(c => c.code === '724').length,
+    fallRisk: fallRisk,
+    pressureUlcer: pressureUlcer,
+    suicideRisk: suicideRisk,
+    covidConfirmed: covidConfirmed,
+    unexpectedEvents: unexpectedEvents,
+    nearMisses: nearMisses,
+    availableVentsCount: availableVents,
+    totalPatients: active.length,
+    morseSum: fallRisk.reduce((s, r) => s + (Number(r.morseScore) || 0), 0),
+    bradenSum: pressureUlcer.reduce((s, r) => s + (Number(r.bradenScore) || 0), 0)
+  };
+}
+
+module.exports = { autoPopulate, COLL, create, update, addDynamicItem, removeDynamicItem, updateDynamicItem, submit, sign, listToday, listRecent };

@@ -71,6 +71,8 @@ const P = {
   'ed.manage': 'admin,supervisor_er,head_nurse',
   'ed.code': 'admin,supervisor_er,physician,resident,attending,nurse,head_nurse',
   'ed.order': 'admin,supervisor_er,physician,resident,attending,nurse,head_nurse',
+  'supervisor.view': 'admin,hospital_director,medical_director,nursing_director,supervisor,supervisor_senior,supervisor_clinical,supervisor_er,quality_officer,head_nurse,matron,nurse,receptionist,anesthesiologist',
+  'supervisor.handover': 'admin,hospital_director,medical_director,nursing_director,supervisor,supervisor_senior,supervisor_clinical,supervisor_er,head_nurse,matron',
   'ed.order.draft':             'admin,supervisor_er,physician,resident,attending',
   'ed.order.cosign':            'admin,supervisor_er,attending,specialist',
   'ed.order.cosign_attending':  'admin,attending',
