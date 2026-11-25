@@ -478,7 +478,7 @@
     },
     cres: function (id, el) {
       var legacy = el.getAttribute('data-legacy') === '1';
-      if (legacy) { var oc = window.prompt('نتیجهٔ کد (مثلاً ROSC / فوت / ترانسفر):'); if (!oc) return; return post('/api/emergency/codes/' + encodeURIComponent(id) + '/close', { outcome: oc }).then(function () { toast('کد بسته شد'); refresh(false); }).catch(function (e) { toast('❌ ' + errFa(e)); }); }
+      if (legacy) { NABZ.dialog.form({ icon: '🚨', title: 'بستن کد', fields: [{ key: 'outcome', label: 'نتیجهٔ کد', required: true, type: 'select', options: [['ROSC','ROSC — بازگشت گردش خون'],['death','فوت'],['transfer','انتقال به ICU'],['other','سایر']] }], submitLabel: 'بستن' }).then(function (data) { if (!data) return; return post('/api/emergency/codes/' + encodeURIComponent(id) + '/close', { outcome: data.outcome }).then(function () { toast('✅ کد بسته شد'); refresh(false); }).catch(function (e) { toast('❌ ' + errFa(e)); }); }); }
       if (!window.confirm('کد پایان یابد؟')) return;
       post('/api/erf/codes/' + encodeURIComponent(id) + '/resolve', {}).then(function () { toast('کد بسته شد'); refresh(false); }).catch(function (e) { toast('❌ ' + errFa(e)); });
     },

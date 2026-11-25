@@ -575,18 +575,13 @@ h += '<div class="sup-hd"><div class="sup-hd-t">🏛️ داشبورد سوپر�
     } catch (e) { /* silent */ }
   };
   NABZ._supAddFinding = async function(rid) {
-    var cat = prompt('دسته:\n1=پرسنل 2=تجهیزات 3=عفونت 4=ایمنی 5=دارو 6=تخت 7=سایر');
-    if (!cat) return;
-    var cats = ['staffing','equipment','infection','safety','medication','beds','other'];
-    var category = cats[Number(cat) - 1];
-    if (!category) { toast('نامعتبر'); return; }
-    var sev = prompt('شدت:\n1=اطلاعی 2=هشدار 3=بحرانی');
-    if (!sev) return;
-    var severities = ['info','warning','critical'];
-    var severity = severities[Number(sev) - 1];
-    if (!severity) { toast('نامعتبر'); return; }
-    var text = prompt('متن یافته:');
-    if (!text || text.length < 3) { toast('کوتاه'); return; }
+    var data = await NABZ.dialog.form({ icon: '⚠️', title: 'افزودن یافته', fields: [
+      { key: 'category', label: 'دسته', required: true, type: 'select', options: [['staffing','پرسنل'],['equipment','تجهیزات'],['infection','عفونت'],['safety','ایمنی'],['medication','دارو'],['beds','تخت'],['other','سایر']] },
+      { key: 'severity', label: 'شدت', required: true, type: 'select', options: [['info','اطلاعی'],['warning','هشدار'],['critical','بحرانی']] },
+      { key: 'text', label: 'متن یافته', required: true, type: 'textarea' }
+    ], submitLabel: 'افزودن' });
+    if (!data) return;
+    var category = data.category, severity = data.severity, text = data.text;
     try {
       await post('/api/supervisor/round/' + rid + '/finding', { category: category, severity: severity, text: text });
       var today = await api('/api/supervisor/round/today');
@@ -848,12 +843,12 @@ h += '<div class="sup-hd"><div class="sup-hd-t">🏛️ داشبورد سوپر�
 
   // ═══════ Handlers ═══════
   NABZ._supNewHandover = async function() {
-    var shift = prompt('شیفت:\n1 = صبح\n2 = عصر\n3 = شب');
-    if (!shift) return;
-    var shifts = ['morning', 'evening', 'night'];
-    var st = shifts[Number(shift) - 1];
-    if (!st) { toast('نامعتبر'); return; }
-    var summary = prompt('خلاصه شیفت (اختیاری):') || '';
+    var data = await NABZ.dialog.form({ icon: '📝', title: 'گزارش شیفت جدید', fields: [
+      { key: 'shiftType', label: 'شیفت', required: true, type: 'select', options: [['morning','صبح'],['evening','عصر'],['night','شب']] },
+      { key: 'summary', label: 'خلاصه (اختیاری)', type: 'textarea' }
+    ], submitLabel: 'ایجاد' });
+    if (!data) return;
+    var st = data.shiftType, summary = data.summary || '';
     try {
       await post('/api/supervisor/handover', { date: new Date().toISOString().slice(0, 10), shiftType: st, summary: summary });
       toast('✅ گزارش ایجاد شد');
