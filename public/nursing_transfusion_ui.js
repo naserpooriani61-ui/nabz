@@ -286,7 +286,7 @@ async function _doReaction(txId) {
 }
 
 async function _complete(txId) {
-  const note = prompt('یادداشت پایانی (اختیاری):') || '';
+  const note = (await NABZ.dialog.form({ icon: '📝', title: 'یادداشت پایانی', fields: [{ key: 'v', label: 'یادداشت پایانی (اختیاری)', type: 'textarea' }], submitLabel: 'ثبت' }).then(function(d) { return d && d.v; })) || '';
   try {
     await _api('/api/nc/transfusion/' + txId + '/complete', { method:'POST', body: JSON.stringify({ note }) });
     NABZ._toast('✅ ترانسفوزیون تکمیل شد');

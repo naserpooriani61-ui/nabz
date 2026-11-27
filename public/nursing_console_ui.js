@@ -209,11 +209,11 @@ async function _kardexAct(oid, action){
   const reasons={hold:'دلیل نگه‌داری:', cancel:'دلیل لغو:', discontinue:'دلیل قطع:'};
   let reason=null;
   if(reasons[action]){
-    reason=prompt(reasons[action]);
+    reason = await NABZ.dialog.form({ icon: '📝', title: 'دلیل', fields: [{ key: 'v', label: reasons[action], required: true, type: 'textarea' }], submitLabel: 'تأیید' }).then(function(d) { return d && d.v; });
     if(action!=='execute'&&(!reason||reason.trim().length<3))return alert('دلیل الزامی');
   }
   if(action==='execute'){
-    const note=prompt('یادداشت اجرا (اختیاری):')||'';
+    const note = (await NABZ.dialog.form({ icon: '📝', title: 'یادداشت', fields: [{ key: 'v', label: 'یادداشت اجرا (اختیاری)', type: 'textarea' }], submitLabel: 'ثبت' }).then(function(d) { return d && d.v; })) || '';
     try{
       await _api('/api/nursing/console/'+state.pid+'/kardex/'+oid+'/execute',{method:'POST',body:JSON.stringify({note})});
       NABZ._toast('✅ اجرا ثبت شد');
@@ -402,7 +402,7 @@ async function _submitCheck(ivId){
 }
 
 async function _ivDiscontinue(ivId){
-  const reason=prompt('دلیل قطع:','پایان درمان');
+  const reason = (await NABZ.dialog.form({ icon: '🛑', title: 'دلیل قطع', fields: [{ key: 'v', label: 'دلیل قطع', required: true, type: 'text' }], submitLabel: 'تأیید' }).then(function(d) { return d && d.v; })) || 'پایان درمان';
   if(!reason)return;
   try{await _api('/api/nursing/console/'+state.pid+'/iv/'+ivId+'/discontinue',{method:'POST',body:JSON.stringify({reason})});NABZ._toast('✅ قطع شد');await reload();}catch(e){alert('خطا: '+e.message);}
 }

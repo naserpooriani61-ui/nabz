@@ -615,19 +615,19 @@
 
     async function promptAction(action) {
       if (action === 'administer') {
-        const w = prompt('شاهد (برای High-Alert اجباری):');
+        const w = await NABZ.dialog.form({ icon: '✍️', title: 'شاهد', fields: [{ key: 'v', label: 'شاهد (برای High-Alert اجباری)', required: true, type: 'text' }], submitLabel: 'تأیید' }).then(function(d) { return d && d.v; });
         const body = { fiveRights: { attested: true, at: new Date().toISOString() } };
         if (w) body.witnessId = w;
-        const notes = prompt('توضیحات (اختیاری):');
+        const notes = await NABZ.dialog.form({ icon: '📝', title: 'توضیحات', fields: [{ key: 'v', label: 'توضیحات (اختیاری)', type: 'textarea' }], submitLabel: 'تأیید' }).then(function(d) { return d && d.v; });
         if (notes) body.notes = notes;
         return body;
       }
       if (action === 'respond') {
-        const a = prompt('پاسخ مشاوره:'); if (!a) return null;
+        const a = await NABZ.dialog.form({ icon: '💬', title: 'پاسخ مشاوره', fields: [{ key: 'v', label: 'پاسخ مشاوره', required: true, type: 'textarea' }], submitLabel: 'ارسال' }).then(function(d) { return d && d.v; }); if (!a) return null;
         return { answer: a };
       }
       if (['cancel','discontinue','refuse','miss','hold'].includes(action)) {
-        const r = prompt('دلیل:'); if (!r) return null;
+        const r = await NABZ.dialog.form({ icon: '📝', title: 'دلیل', fields: [{ key: 'v', label: 'دلیل', required: true, type: 'textarea' }], submitLabel: 'تأیید' }).then(function(d) { return d && d.v; }); if (!r) return null;
         return { reason: r };
       }
       return {};
@@ -717,4 +717,126 @@
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
   else boot();
+
+  // Bridge: kardex to nursing workspace
+  window.NABZ = window.NABZ || {};
+  window.NABZ._kxFindActiveVisit = async function(patientId, patientName) {
+    var token = localStorage.getItem('nabz_tk') || '';
+    var h = token ? { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token } : { 'Content-Type': 'application/json' };
+    var r = await fetch('/api/emergency/visits', { headers: h }).then(function(x) { return x.json(); });
+    var list = (r && r.data && r.data.visits) || (r && r.visits) || (Array.isArray(r) ? r : []);
+    var TERM = ['closed','discharged','departed','transferred','lwbs','absconded'];
+    var active = list.filter(function(v) { return TERM.indexOf(v.status) === -1; });
+    var found = active.find(function(x) { return x.patientId === patientId || x.id === patientId; });
+    if (!found && patientName) found = active.find(function(x) { return x.name && String(x.name).trim() === String(patientName).trim(); });
+    return found || null;
+  };
+  window.NABZ._kxOpenNursingForPatient = async function(patientId, opts) {
+    opts = opts || {};
+    try {
+      var v = await window.NABZ._kxFindActiveVisit(patientId, opts.patientName);
+      if (!v) { if (confirm("ویزیت فعال اورژانس برای این بیمار نیست. ویزیت جدید بسازیم؟")) { window.NABZ._triRegisterNewPatient && window.NABZ._triRegisterNewPatient(); } return; }
+      if (window.NABZ_NAV) window.NABZ_NAV.go('ed/nursing/v', { visitId: v.id });
+      else if (window.NABZ && window.NABZ.show) window.NABZ.show('ed_nursing');
+    } catch (e) { console.error("[kx]", e); alert("خطا: " + (e.message || e)); }
+  };
+  window.NABZ._kxOpenVitalsForPatient = async function(patientId, opts) {
+    opts = opts || {};
+    try {
+      var v = await window.NABZ._kxFindActiveVisit(patientId, opts.patientName);
+      if (!v) { alert('ویزیت فعال نیست'); return; }
+      if (window.NABZ_NAV) window.NABZ_NAV.go('ed/physician/v', { visitId: v.id });
+      setTimeout(function() { if (window.NABZ._phVitals) window.NABZ._phVitals(); }, 600);
+    } catch (e) { alert("خطا: " + (e.message || e)); }
+  };
+  (function rebindKardexTabs() {
+    function fix() {
+      document.querySelectorAll('button').forEach(function(b) {
+        if (b.getAttribute('data-kx-rebound')) return;
+        var t = (b.textContent || '').trim();
+        if (t.indexOf('MAR') >= 0 && t.indexOf('تعاملی') >= 0) {
+          b.setAttribute('onclick', 'NABZ._kxOpenNursingForPatient(window.__kx_patientId, {patientName: window.__kx_patientName})');
+          b.setAttribute('data-kx-rebound', '1');
+        } else if ((t.indexOf('علائم حیاتی') >= 0 || t.indexOf('ویتال') >= 0) && t.indexOf('تعاملی') >= 0) {
+          b.setAttribute('onclick', 'NABZ._kxOpenVitalsForPatient(window.__kx_patientId, {patientName: window.__kx_patientName})');
+          b.setAttribute('data-kx-rebound', '1');
+        } else if (t.indexOf('مراقبت پرستاری') >= 0 || t.indexOf('برنامه مراقبت') >= 0) {
+          b.setAttribute('onclick', 'NABZ._kxOpenNursingForPatient(window.__kx_patientId, {patientName: window.__kx_patientName})');
+          b.setAttribute('data-kx-rebound', '1');
+        }
+      });
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fix);
+    else setTimeout(fix, 500);
+    setInterval(fix, 3000);
+  })();
+
+  // ═══════════════════════════════════════════════════════════════
+  // _kx_bridge2_installed — Kardex bridge to workspaces
+  // ═══════════════════════════════════════════════════════════════
+  window.NABZ = window.NABZ || {};
+
+  window.NABZ._kxGetCurrentPatient = function() {
+    try {
+      var u = new URL(window.location.href);
+      var pid = u.searchParams.get('patientId') || u.searchParams.get('id');
+      if (pid && pid !== 'undefined' && pid !== 'null') return pid;
+    } catch (_) {}
+    if (window.__kx_patientId) return window.__kx_patientId;
+    if (window.KX && window.KX.patientId) return window.KX.patientId;
+    if (window.KX_STATE && window.KX_STATE.patientId) return window.KX_STATE.patientId;
+    return null;
+  };
+
+  window.NABZ._kxFindActiveVisit = async function(pid, patientName) {
+    if (!pid && !patientName) return null;
+    try {
+      var tk = localStorage.getItem('nabz_tk') || '';
+      var h = { 'Content-Type': 'application/json' };
+      if (tk) h.Authorization = 'Bearer ' + tk;
+      var r = await fetch('/api/emergency/visits', { headers: h }).then(function(x) { return x.json(); });
+      var list = (r && r.data && r.data.visits) || (r && r.visits) || (Array.isArray(r) ? r : []);
+      var TERM = ['closed','discharged','departed','transferred','lwbs','absconded','deceased'];
+      var active = list.filter(function(v) { return v && TERM.indexOf(v.status) === -1; });
+      var found = null;
+      if (pid) found = active.find(function(v) { return v.patientId === pid || v.id === pid; });
+      if (!found && patientName) found = active.find(function(v) { return v.name && String(v.name).trim() === String(patientName).trim(); });
+      return found || null;
+    } catch (e) {
+      console.warn('[kx-bridge] findActiveVisit:', e && e.message);
+      return null;
+    }
+  };
+
+  window.NABZ._kxGoWorkspace = async function(kind) {
+    var pid = window.NABZ._kxGetCurrentPatient();
+    var name = window.__kx_patientName || (window.KX && window.KX.patientName) || '';
+    if (!pid && !name) { alert('شناسه بیمار یافت نشد'); return; }
+    var v = await window.NABZ._kxFindActiveVisit(pid, name);
+    if (!v) {
+      if (confirm('این بیمار ویزیت فعال اورژانس ندارد. ویزیت جدید ثبت کنیم؟')) {
+        if (window.NABZ._triRegisterNewPatient) window.NABZ._triRegisterNewPatient();
+      }
+      return;
+    }
+    var routes = { sbar: 'ed/sbar/v', discharge: 'ed/discharge/v', careplan: 'ed/careplan/v', nursing: 'ed/nursing/v', physician: 'ed/physician/v' };
+    var route = routes[kind];
+    if (!route) { alert('نوع نامعتبر'); return; }
+    try {
+      if (window.NABZ_NAV) window.NABZ_NAV.go(route, { visitId: v.id });
+      else window.location.hash = '#/' + route + '/' + encodeURIComponent(v.id);
+    } catch (e) { alert('خطا: ' + (e.message || e)); }
+  };
+
+  window.NABZ._kxOpenSbar      = function() { return window.NABZ._kxGoWorkspace('sbar'); };
+  window.NABZ._kxOpenDischarge = function() { return window.NABZ._kxGoWorkspace('discharge'); };
+  window.NABZ._kxOpenCarePlan  = function() { return window.NABZ._kxGoWorkspace('careplan'); };
+  window.NABZ._kxOpenNursing   = function() { return window.NABZ._kxGoWorkspace('nursing'); };
+  window.NABZ._kxOpenPhysician = function() { return window.NABZ._kxGoWorkspace('physician'); };
+
+  window.NABZ._kxSetPatient = function(pid, name) {
+    window.__kx_patientId = pid;
+    window.__kx_patientName = name || '';
+  };
+
 })();

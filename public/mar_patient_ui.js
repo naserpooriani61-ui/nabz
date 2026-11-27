@@ -93,7 +93,7 @@
   };
 
   NABZ.marRefuse = async function(marId, pid) {
-    const reason = prompt('دلیل رد دوز را وارد کنید:');
+    const reason = await NABZ.dialog.form({ icon: '❌', title: 'رد دوز', fields: [{ key: 'v', label: 'دلیل رد دوز را وارد کنید', required: true, type: 'textarea' }], submitLabel: 'رد' }).then(function(d) { return d && d.v; });
     if (!reason) return;
     try {
       await NABZ._api('/api/kardex/mar/' + marId + '/refuse', { method: 'POST', body: JSON.stringify({ reason }) });

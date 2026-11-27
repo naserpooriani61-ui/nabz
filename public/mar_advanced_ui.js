@@ -489,7 +489,7 @@
       } catch (e) {
         // Special handling for allergy override
         if (String(e.message).indexOf('allergy_conflict') >= 0) {
-          const override = prompt('⚠️ آلرژی: ' + e.message + '\n\nدلیل override (فقط attending):');
+          const override = await NABZ.dialog.form({ icon: '⚠️', title: 'Override', fields: [{ key: 'v', label: 'آلرژی: ' + e.message + ' — دلیل override (فقط attending)', required: true, type: 'textarea' }], submitLabel: 'تأیید' }).then(function(d) { return d && d.v; });
           if (override) {
             body.overrideReason = override;
             try {
@@ -764,7 +764,7 @@
     //  REFUSE
     // ═══════════════════════════════════════════════════
     async refuse(marId) {
-      const reason = prompt('دلیل رد دوز:');
+      const reason = await NABZ.dialog.form({ icon: '❌', title: 'رد دوز', fields: [{ key: 'v', label: 'دلیل رد دوز', required: true, type: 'textarea' }], submitLabel: 'رد' }).then(function(d) { return d && d.v; });
       if (!reason) return;
       try {
         await M._api('/api/clinical/mar/' + marId + '/refuse', {
