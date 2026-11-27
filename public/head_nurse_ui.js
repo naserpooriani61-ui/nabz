@@ -200,8 +200,9 @@ async function _bedAction(bedId, status){
     return;
   }
   if(status==='available'){
-    const patientId=prompt('کد بیمار برای تخصیص:');
-    if(!patientId)return;
+    var pt = await NABZ.patientPicker({ title: 'انتخاب بیمار برای تخصیص تخت' });
+    if(!pt || !pt.id)return;
+    const patientId = pt.id;
     try{await _api('/api/head_nurse/beds/'+bedId+'/assign',{method:'POST',body:JSON.stringify({patientId})});NABZ._toast('✅ تخصیص');_renderBeds();}catch(e){alert('خطا: '+e.message);}
   }
 }
@@ -258,7 +259,7 @@ async function _renderRequests(){
 
 async function _decideRequest(id, decision){
   let reason=null;
-  if(decision==='reject'){reason=prompt('دلیل رد:');if(!reason)return;}
+  if(decision==='reject'){var d=await NABZ.dialog.form({icon:'❌',title:'دلیل رد',fields:[{key:'v',label:'دلیل رد',required:true,type:'textarea'}],submitLabel:'رد'});if(!d||!d.v)return;reason=d.v;}
   try{await _api('/api/head_nurse/requests/'+id+'/approve',{method:'POST',body:JSON.stringify({decision,reason})});NABZ._toast('✅ ثبت شد');show(null,null);}catch(e){alert('خطا: '+e.message);}
 }
 
