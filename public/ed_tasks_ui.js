@@ -99,7 +99,7 @@
     catch (e) { alert('خطا: ' + e.message); }
   };
   window.NABZ._taskResolve = async function (id) {
-    const note = prompt('یادداشت (اختیاری):');
+    const note = await NABZ.dialog.form({ icon: '📝', title: 'یادداشت (اختیاری)', fields: [{ key: 'v', label: 'یادداشت', type: 'textarea' }], submitLabel: 'تأیید' }).then(d => d && d.v);
     try { await apiCall('/api/ed/tasks/' + encodeURIComponent(id) + '/resolve', { method: 'POST', body: JSON.stringify({ note: note }) }); if (window.NABZ._toast) NABZ._toast('✅ حل شد'); load(); }
     catch (e) { alert('خطا: ' + e.message); }
   };

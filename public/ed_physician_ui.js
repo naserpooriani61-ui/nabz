@@ -469,7 +469,7 @@
   }
 
   async function rejectOrder(id) {
-    const reason = prompt('دلیل رد (حداقل ۵ کاراکتر):');
+    const reason = await NABZ.dialog.form({ icon: '❌', title: 'دلیل رد', fields: [{ key: 'v', label: 'دلیل رد (حداقل ۵ کاراکتر)', required: true, type: 'textarea' }], submitLabel: 'رد' }).then(d => d && d.v);
     if (!reason || reason.length < 5) { alert('دلیل حداقل ۵ کاراکتر لازم است'); return; }
     try {
       await apiCall('/api/ed/orders/' + id + '/reject', { method: 'POST', body: JSON.stringify({ reason }) });

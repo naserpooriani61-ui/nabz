@@ -242,7 +242,7 @@
     },
 
     async _approve(id) {
-      var note = prompt('توضیح (اختیاری):') || '';
+      var note = (await NABZ.dialog.form({ icon: '📝', title: 'توضیح (اختیاری)', fields: [{ key: 'v', label: 'توضیح', type: 'textarea' }], submitLabel: 'تأیید' }).then(d => d && d.v)) || '';
       try {
         await RUI._api('/api/req/' + id + '/approve', { method:'POST', body: JSON.stringify({ note: note }) });
         NABZ._toast('✅ تأیید شد');
@@ -252,7 +252,7 @@
     },
 
     async _reject(id) {
-      var reason = prompt('دلیل رد (اجباری):');
+      var reason = await NABZ.dialog.form({ icon: '❌', title: 'دلیل رد', fields: [{ key: 'v', label: 'دلیل رد (اجباری)', required: true, type: 'textarea' }], submitLabel: 'رد' }).then(d => d && d.v);
       if (!reason) return;
       try {
         await RUI._api('/api/req/' + id + '/reject', { method:'POST', body: JSON.stringify({ reason: reason }) });

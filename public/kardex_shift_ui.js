@@ -97,9 +97,9 @@
         let b = {};
         if (a === 'administer') {
           b.fiveRights = { attested: true, at: new Date().toISOString() };
-          const wit = prompt('شاهد (اختیاری):'); if (wit) b.witnessId = wit;
+          var _w = await NABZ.dialog.form({ icon: '✍️', title: 'شاهد (اختیاری)', fields: [{ key: 'v', label: 'شاهد', type: 'text' }], submitLabel: 'تأیید' }).then(d => d && d.v); const wit = _w; if (wit) b.witnessId = wit;
         } else if (['refuse','cancel','hold','miss'].includes(a)) {
-          const r = prompt('دلیل:'); if (!r) return; b.reason = r;
+          const r = await NABZ.dialog.form({ icon: '📝', title: 'دلیل', fields: [{ key: 'v', label: 'دلیل', required: true, type: 'textarea' }], submitLabel: 'تأیید' }).then(d => d && d.v); if (!r) return; b.reason = r;
         }
         btn.disabled = true; const o = btn.textContent; btn.textContent = '...';
         try { await doAction(k, i, a, b); await load(w, s, el); }
